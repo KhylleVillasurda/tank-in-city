@@ -1,0 +1,24 @@
+/*
+ * Eulbink, by Inkpendude — lospec.com/palette-list/eulbink
+ *
+ * The default. It answers to the bare `.pixel` as well as to its own name, so a
+ * panel dropped on a page that never chose a theme is still themed: no script,
+ * no flash of unthemed pixels, nothing to configure. Exactly one theme file
+ * carries that bare selector, and `check-pixel` fails if two of them do.
+ *
+ * Seven colours for eight roles, so text and flash are the same white. That is
+ * the honest way round: the brightest step of the palette is white, and white is
+ * also the only readable colour for body text on this navy.
+ */
+.pixel,
+.pixel[data-theme="eulbink"] {
+  --pixel-background: #201533;
+  --pixel-shadow: #252446;
+  --pixel-panel: #203562;
+  --pixel-line: #1e579c;
+  --pixel-accent: #0098db;
+  --pixel-highlight: #0ce6f2;
+  --pixel-text: #ffffff;
+  --pixel-flash: #ffffff;
+  --pixel-sheet: url("/sprites/coin-eulbink.png");
+}

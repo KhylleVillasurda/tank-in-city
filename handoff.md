@@ -37,6 +37,10 @@ spawns a task per room with one `World`, ticked at 60 Hz, taking `input` and
 sending `map` and `snapshot`. Nothing renders it in a browser yet; two socket
 clients can, and `npm run check-match` is one.
 
+A pixel UI kit lives at `/ui`: a panel, a spinning coin and an insert-coin bar, in
+three swappable palettes, with its own checks (`docs/pixel-ui.md`). No game screen
+uses it yet and no page links to it.
+
 ## Read these, in this order
 
 1. `plan.md` — the source of truth.
@@ -59,6 +63,47 @@ clients can, and `npm run check-match` is one.
 11. `docs/sharing.md` — how to put the game on a public link with cloudflared, so
     friends can open it without a deployment. Read it before testing with
     anyone: it says what friends can and cannot do today.
+12. `docs/pixel-ui.md` — the pixel UI on `/ui`: the eight role names, the three
+    palettes, the animation budget, and the measured result of the palette and
+    stepping checks.
+
+## What this session changed
+
+Do not redo these; build on them.
+
+- **The palette is a role scheme with three themes behind it.** `panel.css` names
+  eight roles and no colours at all; `web/components/pixel/*.css` is one file per
+  theme filling them in. **Eulbink** (Inkpendude, 7 colours) is the default,
+  **Ammo-8** (Ammo, 8) is the one the brief came with, **Cryptic Ocean**
+  (Klafooty, 6) is the third. A fourth palette is a CSS file, one line in the
+  switch, and `npm run sprites` — no component and no rule changes.
+- **The default answers to a bare `.pixel` as well as to its own name.** So a page
+  with the panel on it is themed before any script runs and the stored choice only
+  catches up: no flash of an unthemed panel. Exactly one theme file may carry that
+  selector, and the check fails if two do.
+- **The coin sheets are generated, not drawn.** `npm run sprites` writes one
+  8-frame 16x16 sheet per theme, shaded from that theme's own colours, using a
+  twenty-line PNG writer and no dependencies. `npm run check-pixel` re-renders
+  every sheet and fails if the committed PNG has drifted from its palette — that
+  is the guard on the "only palette colours" rule. It also fails on a colour that
+  is in no palette, an easing curve, a frame held longer than 150ms, a theme
+  missing a role, and two default themes. **All of those guards were tested by
+  breaking them on purpose**, not assumed to work.
+- **The pixels were checked in a real browser, not by reading the CSS.** With
+  every animation paused at a chosen millisecond: four times inside one coin frame
+  are pixel-identical, the eight frames differ by 608 to 1664 pixels, and sixteen
+  element screenshots across the three themes contain no colour outside the
+  palette. The browser-decoded sheets too. Numbers and method: `docs/pixel-ui.md`.
+- **One measured deviation, and it is text.** 0.98% of a full-page screenshot is
+  off-palette and all of it is subpixel anti-aliasing on glyph edges; the art,
+  surfaces, borders, bevels and shadows measure clean. Nothing in CSS turns it off
+  on Linux — `-webkit-font-smoothing: none`, an exact line-height, whole-pixel
+  positions and `transform: translateZ(0)` each changed the count by **exactly
+  nothing**. `docs/pixel-ui.md` ends with the three ways to trade it.
+- **The scanline overlay stands down where the panel is.**
+  `body:has(.pixel)::after` in `panel.css`: the site-wide overlay paints white at
+  3%, which is not a colour in any palette. Worth remembering before putting a
+  palette-exact surface anywhere else.
 
 ## What the last session changed
 
@@ -267,6 +312,7 @@ cd server && cargo test             # 44 tests: 26 room rules, 10 unit, 8 socket
 cd server && cargo clippy --all-targets      # must be silent
 cd web && npm run check             # headless wasm ABI and rules
 cd web && npm run check-audio       # headless sound triggers
+cd web && npm run check-pixel       # palette roles, stepped animation, sprite sheets
 cd web && npx tsc --noEmit          # type check
 cd web && npm run build             # production build
 ```
@@ -297,9 +343,10 @@ warnings and clippy is silent in both, `npm run check` reports
 `wasm ABI ok: score=2700 lives=1 stage=1 enemiesLeft=4 idleGameOver=30s
 statesSeen=0,2`, `npm run check-audio` reports `audio ok`, `npm run check-lobby`
 reports `lobby ok`, `npm run check-match` reports
-`input moved the host's tank: x 1536 -> 1572`, `tsc` and `build` are clean, and
-the graph was 848 nodes / 1354 edges / 44 communities before this session's
-update.
+`input moved the host's tank: x 1536 -> 1572`, `npm run check-pixel` reports
+`pixel ui ok: 3 themes (eulbink by default), 3 stepped animations, 3 sprite
+sheets`, `tsc` and `build` are clean, and the graph is 981 nodes / 1638 edges / 70
+communities.
 
 `score=2700 lives=1` in that line is worth knowing: it is the *same* number the
 check printed before the several-players change, from the same seed over the same
@@ -480,6 +527,8 @@ discoveries, and do not re-ask them every turn.
 | **Sprite art** | The user is sourcing pixel art. The sizes are already fixed in `docs/sprites.md`, so no decision is needed — only the files. | Work touches rendering, layout or visual polish; a milestone ends; or the user asks what comes next. **Once per session at most.** |
 | Six sound files | `docs/deferred.md` lists each one with the event that triggers it. | Work touches sound. |
 | The engine loop | `tank_moving_by_kenny.ogg` is wired; `tank_moving.ogg` is a different sound. | The user is play-testing — only their ear can decide. |
+| **Whether `/ui` joins the game** | The kit and the game are two looks: `/ui` is palette-exact in three palettes, the game and lobby are still emerald. Nothing links to `/ui` yet. | The user asks about the UI, or work touches the title screen or the lobby. |
+| **Text edges against the palette rule** | 0.98% of a `/ui` screenshot is anti-aliased text rather than palette colour. Accepting it is the current answer; `docs/pixel-ui.md` lists the alternatives. | The user says the rule is absolute, or asks about the fringe colours. |
 
 ## If you are picking up work now
 
@@ -496,9 +545,10 @@ In the order that pays best:
    renders a *server* `snapshot` instead. `render.ts` already takes a plain
    `Snapshot` object, so the renderer is reused — the work is one page, a socket
    that holds open after `start_match`, and turning the flat `data` array back
-   into a `Snapshot` with the same offsets `readSnapshot` uses. **No browser
-   exists in this environment**, so this can only be type-checked and built here;
-   the user has to open it.
+   into a `Snapshot` with the same offsets `readSnapshot` uses. **A browser does
+   exist here** — the Playwright MCP server drives one (see "Traps"), so this can
+   be built, driven and screenshotted in this environment; the user still has to
+   judge how it feels to play.
 2. **Rounds and win conditions**, right behind it: best-of-3, a round ends when a
    base falls or a side is out of lives, lives and scores reset between rounds,
    and a winner is named — which needs the `GameOver` reason the engine does not

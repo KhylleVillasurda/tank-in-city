@@ -1,0 +1,189 @@
+/*
+ * The pixel panel: an 8-bit frame, a spinning coin and an insert-coin bar.
+ *
+ * Deliberately global CSS, imported by the component, so it follows the panel to
+ * whatever page uses it. The Next docs warn that global styles are never torn
+ * down on navigation, which is why every selector in this file and in the three
+ * theme files beside it starts with `.pixel` — the prefix is the namespace, and
+ * outside it this file changes nothing.
+ *
+ * The eight roles below are the entire interface between this file and a theme.
+ * A theme is a file next to this one that fills them in; adding a fourth palette
+ * means adding a file and editing nothing.
+ *
+ * Three rules run through the whole thing, and they are why it looks like this:
+ *
+ *   1. An animation is a frame animation, so its timing function is steps(). No
+ *      easing curve appears in this file, and check-pixel fails the build if one
+ *      ever does. Every one is 4 to 12 frames at 80 to 150ms a frame.
+ *   2. Nothing is translucent, blurred or blended, and every shadow has 0 blur,
+ *      so every pixel the panel paints is exactly one of the theme's colours —
+ *      no invented greys along the way. This is also why the page it sits on
+ *      turns the site's scanline overlay off: that overlay is white at 3%.
+ *   3. Geometry is whole pixels, and the coin is a 16x16 sprite at 4x, so
+ *      nothing ever lands on half a pixel.
+ */
+@import "./ammo-8.css";
+@import "./eulbink.css";
+@import "./cryptic-ocean.css";
+
+/*
+ * The roles, the same eight in every theme:
+ *
+ *   background  the void a panel sits on
+ *   shadow      the dark side of a bevel, and what a panel drops
+ *   panel       the surface of a panel or a button
+ *   line        borders and dividers
+ *   accent      the second colour: a caption, a bar's fill, the coin's body
+ *   highlight   the lit side of a bevel
+ *   text        body text
+ *   flash       the brightest step, for a title
+ *
+ * A palette shorter than eight colours repeats one across two roles, which is
+ * why a theme still names all eight. check-pixel fails if a theme misses one.
+ */
+.pixel {
+  background: var(--pixel-background);
+  color: var(--pixel-text);
+  /* Two steps of the pixel face's 8px grid. At a whole multiple the glyphs land
+     on whole pixels, so text stays inside the palette too. */
+  font-size: 16px;
+  line-height: 1.5;
+  /* <body> asks for antialiased text; a panel that promises palette-exact
+     pixels cannot have grey edges. */
+  -webkit-font-smoothing: none;
+}
+
+/*
+ * The site's scanline overlay is white at 3%, which is not a colour in any of
+ * these palettes. On a page showing this panel it stands down.
+ */
+body:has(.pixel)::after {
+  content: none;
+}
+
+.pixel-panel {
+  background: var(--pixel-panel);
+  border: 2px solid var(--pixel-line);
+  padding: 16px;
+  /* 0 blur writes whole pixels. The first two are the bevel — lit on the side
+     the sun is on, dark opposite — and the third is the panel's own shadow. */
+  box-shadow:
+    inset 2px 2px 0 var(--pixel-highlight),
+    inset -2px -2px 0 var(--pixel-shadow),
+    6px 6px 0 var(--pixel-shadow);
+  animation: pixel-boot 720ms steps(6, end) both;
+}
+
+.pixel-panel__title {
+  margin: 0 0 16px;
+  color: var(--pixel-flash);
+  /* Emphasis is a colour, never a weight: the pixel face has one weight and a
+     synthetic bold smears it. */
+  font-weight: normal;
+}
+
+.pixel-panel__body {
+  margin: 0;
+}
+
+/* A caption in the second colour: the line under the body, or a label. */
+.pixel-panel__note {
+  display: block;
+  margin: 8px 0 0;
+  color: var(--pixel-accent);
+}
+
+.pixel-button {
+  font: inherit;
+  color: var(--pixel-text);
+  background: var(--pixel-panel);
+  border: 2px solid var(--pixel-line);
+  padding: 8px 12px;
+  cursor: pointer;
+  box-shadow:
+    inset 2px 2px 0 var(--pixel-highlight),
+    inset -2px -2px 0 var(--pixel-shadow);
+}
+
+/* The chosen one inverts, which is the only state an 8-bit button has. */
+.pixel-button[aria-pressed="true"] {
+  color: var(--pixel-background);
+  background: var(--pixel-accent);
+}
+
+.pixel-button:focus-visible {
+  outline: 2px solid var(--pixel-flash);
+  outline-offset: 2px;
+}
+
+/*
+ * The coin: one strip of eight 16x16 frames, played by stepping the sheet one
+ * frame to the left. 1040ms over 8 steps is 130ms a frame. steps() is the whole
+ * point — the sheet lands on frames instead of sliding between them.
+ */
+.pixel-coin {
+  display: block;
+  /* 16px a frame at 4x, and the strip is eight frames wide. */
+  width: 64px;
+  height: 64px;
+  background-image: var(--pixel-sheet);
+  background-repeat: no-repeat;
+  background-size: 512px 64px;
+  /* Whole multiples only, and no smoothing on the way up. */
+  image-rendering: pixelated;
+  animation: pixel-coin 1040ms steps(8, end) infinite;
+}
+
+@keyframes pixel-coin {
+  from {
+    background-position-x: 0;
+  }
+  to {
+    background-position-x: -512px;
+  }
+}
+
+/*
+ * The panel paints itself down the screen in six steps, the way a slow machine
+ * did. clip-path keeps it inside its own box, so nothing moves.
+ */
+@keyframes pixel-boot {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* The insert-coin bar: eight widths, filling left to right, starting again. */
+.pixel-bar {
+  height: 16px;
+  padding: 2px;
+  background: var(--pixel-background);
+  border: 2px solid var(--pixel-line);
+}
+
+.pixel-bar__fill {
+  height: 100%;
+  background: var(--pixel-accent);
+  animation: pixel-bar 880ms steps(8, end) infinite;
+}
+
+@keyframes pixel-bar {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-panel,
+  .pixel-coin,
+  .pixel-bar__fill {
+    animation: none;
+  }
+}

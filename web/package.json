@@ -13,6 +13,8 @@
     "check-audio": "node --no-warnings scripts/check-audio.mjs",
     "check-lobby": "node scripts/check-lobby.mjs",
     "check-match": "node --no-warnings scripts/check-match.mjs",
+    "check-pixel": "node scripts/check-pixel-ui.mjs",
+    "sprites": "node scripts/make-sprites.mjs",
     "share": "bash scripts/share.sh"
   },
   "dependencies": {

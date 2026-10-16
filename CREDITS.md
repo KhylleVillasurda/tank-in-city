@@ -18,6 +18,9 @@ condition worth knowing about — see "Licence notes" below.
 | `tank_moving_by_kenny.ogg` | Kenney | [kenney.nl](https://kenney.nl/assets) — _pack name to fill in_ | CC0 1.0 |
 | `Battle_by_PerituneMaterial_8bitRPG.ogg` | PeriTune (Sei Mutsuki / むつき醒) | [peritune.com](https://peritune.com/) — _track page URL to fill in_ | PeriTune terms (see below) |
 | `web/app/fonts/press-start-2p.ttf` | Cody "CodeMan38" Boisclair (cody@zone38.net) | [fontspace](https://www.fontspace.com/press-start-2p-font-f11591) | SIL Open Font License 1.1 |
+| Ammo-8 — 8 colours, `web/components/pixel/ammo-8.css` | Ammo | [lospec.com/palette-list/ammo-8](https://lospec.com/palette-list/ammo-8) | palette, credited to its author (see below) |
+| Eulbink — 7 colours, `web/components/pixel/eulbink.css` | Inkpendude | [lospec.com/palette-list/eulbink](https://lospec.com/palette-list/eulbink) | as above |
+| Cryptic Ocean — 6 colours, `web/components/pixel/cryptic-ocean.css` | Klafooty | [lospec.com/palette-list/cryptic-ocean](https://lospec.com/palette-list/cryptic-ocean) | as above |
 
 The four names left blank are the ones worth pasting in when you have the pages
 open. Uploader names are not required by any of these licences, but the plan
@@ -54,6 +57,14 @@ condition in both cases: **do not hand the raw sound file to the public.**
   product must make the file "non-extractable by encryption or similar means".
 - **Kenney** is CC0: no conditions, nothing required. This is the only source of
   the three with no strings at all.
+- **Lospec palettes** (Ammo-8, Eulbink, Cryptic Ocean) are lists of colours, not
+  files: what ships is eight hex values per theme, as CSS variables in
+  `web/components/pixel/`. So the "do not hand out the raw file" conditions above
+  do not apply to them. Lospec publishes each palette with its author's name and
+  no licence text of its own, so the honest entry is the author and the source
+  URL; they are credited here because plan §12 asks for an author on every asset,
+  and because a palette is somebody's work. A palette used only as a *reference*
+  for a role scheme would need no credit at all — these are the shipped colours.
 - **Press Start 2P** is under the SIL Open Font License 1.1. Free to use and
   embed, including commercially, and no visible credit is required — the licence
   lives beside the file in `web/app/fonts/OFL.txt` and it is credited here

@@ -53,6 +53,20 @@ three fifths of the list are done by reuse rather than by new files.
   but nothing plays behind them yet. The rule to keep: snap between states with
   `steps()`, never ease — smooth motion is the one thing an 8-bit machine could
   not do.
+- **The pixel UI kit is not wired into the game.** `/ui` (`docs/pixel-ui.md`) is
+  a panel, a spinning coin and an insert-coin bar in **three swappable palettes**
+  — Eulbink by default, Ammo-8, Cryptic Ocean — with `npm run check-pixel` guarding
+  the palette rule. Nothing in the game uses it yet, and no page links to `/ui`.
+  The first customers would be the title screen's prompt and the lobby, which are
+  still in the site's emerald palette; until then the kit and the game are two
+  different looks side by side, which is worth a decision rather than a drift.
+- **Text edges are the one thing that is not palette-exact.** A full-page
+  screenshot of `/ui` measures 0.98% outside its palette, and every one of those
+  pixels is subpixel anti-aliasing on a glyph edge: the sprites, surfaces, borders,
+  bevels and shadows measure clean. Nothing in CSS turns it off on Linux — not
+  `-webkit-font-smoothing: none`, an exact line-height, whole-pixel positions, nor
+  forcing a compositor layer. `docs/pixel-ui.md` ends with the three ways to trade
+  it; the current answer is to accept it, and the alternative is a bitmap font.
 - **`shadcn/ui`** is still not installed, and now definitely will not be. The
   lobby's dropdown and checkboxes are site components instead — `Select` and
   `Check` in `web/components/`. The checkbox is a real `<input>` with

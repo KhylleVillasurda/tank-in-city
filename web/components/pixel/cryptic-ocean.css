@@ -1,0 +1,19 @@
+/*
+ * Cryptic Ocean, by Klafooty — lospec.com/palette-list/cryptic-ocean
+ *
+ * Six colours for eight roles. The one pale green carries text, accent and
+ * flash, which leaves a purple frame with pale green type on it — the way the
+ * palette wants to be used. The bevel highlight is the mid grey, one step above
+ * the panel, so a raised edge still reads.
+ */
+.pixel[data-theme="cryptic-ocean"] {
+  --pixel-background: #2a173b;
+  --pixel-shadow: #3f2c5f;
+  --pixel-panel: #443f7b;
+  --pixel-line: #4c5c87;
+  --pixel-highlight: #69809e;
+  --pixel-accent: #95c5ac;
+  --pixel-text: #95c5ac;
+  --pixel-flash: #95c5ac;
+  --pixel-sheet: url("/sprites/coin-cryptic-ocean.png");
+}

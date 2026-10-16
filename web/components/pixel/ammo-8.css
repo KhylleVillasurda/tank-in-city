@@ -1,0 +1,21 @@
+/*
+ * Ammo-8, by Ammo — lospec.com/palette-list/ammo-8
+ *
+ * Eight colours for eight roles, so nothing has to be repeated. The ramp runs
+ * dark green to cream, which is what gives the coin its shading.
+ *
+ * A theme is this file and nothing else: the eight role names in panel.css are
+ * the interface, so adding one means adding a file here and touching no other
+ * code. `npm run check-pixel` enforces that.
+ */
+.pixel[data-theme="ammo-8"] {
+  --pixel-background: #040c06;
+  --pixel-shadow: #112318;
+  --pixel-panel: #1e3a29;
+  --pixel-line: #305d42;
+  --pixel-accent: #4d8061;
+  --pixel-highlight: #89a257;
+  --pixel-text: #bedc7f;
+  --pixel-flash: #eeffcc;
+  --pixel-sheet: url("/sprites/coin-ammo-8.png");
+}
