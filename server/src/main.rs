@@ -1,8 +1,8 @@
 //! The Tank In City server.
 //!
-//! Listens on `/ws` for the lobby protocol (plan section 9) and on `/health` so
-//! a tunnel can be checked with one request. The match loop is not built yet, so
-//! a room reaches "playing" and stops there.
+//! Listens on `/ws` for the protocol of plan section 9 and on `/health` so a
+//! tunnel can be checked with one request. A room that starts a match gets one
+//! `World` per room, ticked at 60 Hz by the loop in `matches.rs`.
 
 use server::rooms::Mode;
 use server::ws::{self, Hub};

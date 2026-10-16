@@ -317,6 +317,20 @@ fn starting_a_room_that_does_not_exist_is_refused() {
 }
 
 #[test]
+fn finishing_a_match_puts_the_room_back_in_the_lobby() {
+    let (mut reg, code) = lobby(Mode::FreeForAll, &["ann", "bo"]);
+    reg.start(&code, "ann").unwrap();
+    assert_eq!(reg.room(&code).unwrap().status, Status::Playing);
+
+    assert!(reg.finish(&code), "the room was there to finish");
+    assert_eq!(reg.room(&code).unwrap().status, Status::Waiting);
+    assert_eq!(reg.join(&code, "cy", None), Ok(Team::None), "joinable again");
+
+    // A room everyone left is gone, and finishing it is not an error.
+    assert!(!reg.finish("ZZZZZ"));
+}
+
+#[test]
 fn the_public_list_shows_public_rooms_and_marks_in_progress() {
     let mut reg = registry();
     let open = reg

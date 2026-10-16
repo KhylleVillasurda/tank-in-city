@@ -1,20 +1,21 @@
-//! The WebSocket layer: the lobby protocol of plan section 9.
+//! The WebSocket layer: the protocol of plan section 9.
 //!
 //! One connection is one player. This module is a thin translator: it reads a
-//! message, calls the room registry, and pushes the resulting `room_state` to
+//! message, calls the room registry or the match loop, and pushes the result to
 //! everyone in that room. Every rule stays in `rooms.rs`, so there is no lobby
 //! logic here to drift away from the tests there.
 //!
-//! Slice 2 answers the lobby: `create_room`, `join_room`, `list_rooms`,
-//! `set_ready`, `start_match`, `leave_room`. Everything that needs a running
-//! match — `input`, `reconnect`, `request_swap` — is refused with an error
-//! rather than ignored, so a client is never left guessing why nothing happened.
+//! Slice 4 answers the lobby (`create_room`, `join_room`, `list_rooms`,
+//! `set_ready`, `start_match`, `leave_room`) and the match: `start_match` spawns
+//! the loop in `matches.rs`, `input` is the other half of it, and `map` and
+//! `snapshot` go back out. `reconnect` and `request_swap` are still refused with
+//! an error rather than ignored, so a client is never left guessing.
 //!
 //! Two rules from plan section 10 live here because they are per-connection: a
 //! message size cap, and a messages-per-second cap.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,10 +24,12 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
+use game_core::INPUT_FIRE;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{info, warn};
 
+use crate::matches::{MatchInput, MOVE_MASK};
 use crate::rooms::{JoinError, Mode, Player, Registry, Room, StartError, Status};
 
 /// Largest client message this layer will act on (plan section 10, "Message
@@ -76,9 +79,20 @@ pub enum ClientMessage {
     },
     StartMatch,
     LeaveRoom,
-    /// Every message the plan lists that this slice does not answer yet:
-    /// `input`, `reconnect` and `request_swap`. One arm instead of three dead
-    /// ones, and it keeps a typo from looking like a handled message.
+    /// The plan's `input { move, fire, tick }`. `tick` is deliberately not
+    /// declared: the loop repeats each player's latest input every tick, so a
+    /// tick number has nothing to decide (plan section 5, "Missing input"), and
+    /// serde drops a field it does not know. See `docs/milestone-3.md`.
+    Input {
+        /// The direction bits: up, down, left, right. `fire` is separate.
+        #[serde(default)]
+        r#move: u32,
+        #[serde(default)]
+        fire: bool,
+    },
+    /// The messages this slice still does not answer: `reconnect` and
+    /// `request_swap`. One arm instead of two dead ones, and it keeps a typo
+    /// from looking like a handled message.
     #[serde(other)]
     Unsupported,
 }
@@ -86,14 +100,29 @@ pub enum ClientMessage {
 /// Server to client, plan section 9.
 ///
 /// `session { token }` is not here yet: a session token is only useful with the
-/// 30-second reconnect, and that needs the match loop. The client knows the
-/// socket is live from the browser's own open event.
+/// 30-second reconnect, which needs player identity across a disconnect. The
+/// client knows the socket is live from the browser's own open event.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
-    RoomList { rooms: Vec<crate::rooms::RoomSummary> },
+    RoomList {
+        rooms: Vec<crate::rooms::RoomSummary>,
+    },
     RoomState(RoomState),
-    Error { message: String },
+    /// The full tile map, when a match starts and at the start of each stage
+    /// (plan section 5, "Map transfer"). Row-major, `MAP_H` rows of `MAP_W`.
+    Map {
+        tiles: Vec<u8>,
+    },
+    /// The flat `[i32; SNAP_LEN]` state buffer from `World::write_snapshot`, at
+    /// `SNAPSHOT_HZ`. The fixed offsets are in `game-core`, so the client needs
+    /// no dynamic arithmetic; see the layout table in `docs/milestone-3.md`.
+    Snapshot {
+        data: Vec<i32>,
+    },
+    Error {
+        message: String,
+    },
 }
 
 /// A room as the lobby sees it (plan section 9, `room_state`).
@@ -142,14 +171,21 @@ struct Client {
     tx: UnboundedSender<ServerMessage>,
 }
 
-/// Every room plus every open socket.
+/// Every room, every open socket, and every running match.
 ///
-/// The two locks are never held at the same time — see [`Hub::registry`] — so
-/// there is no lock order to get wrong.
+/// The locks are never held at the same time — see [`Hub::registry`] — so there
+/// is no lock order to get wrong.
 pub struct Hub {
     rooms: Mutex<Registry>,
     clients: Mutex<HashMap<u64, Client>>,
+    /// One sender per room running a match, so an `input` knows where to go.
+    /// A finished match leaves its entry behind; the next `start_match` for that
+    /// code overwrites it, and a send into a dead one is dropped.
+    matches: Mutex<HashMap<String, UnboundedSender<MatchInput>>>,
     next_id: AtomicU64,
+    /// Seeds for `World::with_setup`. Room codes come from the registry's own
+    /// RNG; matches only have to differ from one another.
+    next_seed: AtomicU32,
 }
 
 impl Hub {
@@ -157,7 +193,9 @@ impl Hub {
         Arc::new(Self {
             rooms: Mutex::new(Registry::new(seed)),
             clients: Mutex::new(HashMap::new()),
+            matches: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
+            next_seed: AtomicU32::new(seed),
         })
     }
 
@@ -170,6 +208,13 @@ impl Hub {
 
     fn clients<T>(&self, f: impl FnOnce(&mut HashMap<u64, Client>) -> T) -> T {
         f(&mut self.clients.lock().expect("client lock"))
+    }
+
+    fn matches<T>(
+        &self,
+        f: impl FnOnce(&mut HashMap<String, UnboundedSender<MatchInput>>) -> T,
+    ) -> T {
+        f(&mut self.matches.lock().expect("match lock"))
     }
 
     /// Register a socket and hand back its id and its outbox.
@@ -237,13 +282,8 @@ impl Hub {
         self.registry(|r| r.room(code).map(RoomState::from))
     }
 
-    /// Send the room's current state to everyone in it. Called after anything
-    /// that changes a lobby, so no client has to poll.
-    fn broadcast_room(&self, code: &str) {
-        let Some(state) = self.room_state(code) else {
-            return;
-        };
-        let msg = ServerMessage::RoomState(state);
+    /// One message to everyone in a room.
+    pub(crate) fn broadcast(&self, code: &str, msg: ServerMessage) {
         self.clients(|c| {
             for client in c.values() {
                 if client.seat.as_ref().is_some_and(|s| s.code == code) {
@@ -253,9 +293,74 @@ impl Hub {
         });
     }
 
+    /// Send the room's current state to everyone in it. Called after anything
+    /// that changes a lobby, so no client has to poll.
+    fn broadcast_room(&self, code: &str) {
+        if let Some(state) = self.room_state(code) {
+            self.broadcast(code, ServerMessage::RoomState(state));
+        }
+    }
+
+    /// Whether a room still exists. The match loop asks, so a room everyone left
+    /// does not keep a `World` ticking for nobody.
+    pub(crate) fn room_exists(&self, code: &str) -> bool {
+        self.registry(|r| r.room(code).is_some())
+    }
+
+    /// A match has finished: the room goes back to the lobby so another can
+    /// start. False when the room is already gone.
+    pub(crate) fn finish_match(&self, code: &str) -> bool {
+        let ended = self.registry(|r| r.finish(code));
+        if ended {
+            info!(code, "room back in the lobby");
+            self.broadcast_room(code);
+        }
+        ended
+    }
+
+    /// Spawn a room's match loop.
+    ///
+    /// Everything the loop needs is read while the registry lock is held, then
+    /// the lock is released before the task is spawned.
+    fn start_match(self: &Arc<Self>, code: &str) {
+        // Read the mode and the roster in one visit, so the lock is released
+        // before anything is spawned.
+        let prepared = self.registry(|r| {
+            r.room(code).map(|room| {
+                (
+                    crate::matches::setup_for(room),
+                    room.players()
+                        .iter()
+                        .map(|p| p.name.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+        });
+        let Some((setup, roster)) = prepared else {
+            return;
+        };
+
+        let (tx, rx) = unbounded_channel();
+        self.matches(|m| {
+            // A previous sender for this code belongs to a finished match. It is
+            // dropped here, which is how a stale loop is told to stop.
+            m.insert(code.to_string(), tx);
+        });
+
+        let seed = self.next_seed.fetch_add(1, Ordering::Relaxed);
+        tokio::spawn(crate::matches::run(
+            Arc::clone(self),
+            code.to_string(),
+            seed,
+            rx,
+            setup,
+            roster,
+        ));
+    }
+
     /// Answer one message. Deliberately synchronous: nothing here waits, so no
     /// lock can be held across an `.await`.
-    fn handle(&self, id: u64, msg: ClientMessage) {
+    fn handle(self: &Arc<Self>, id: u64, msg: ClientMessage) {
         match msg {
             ClientMessage::ListRooms => {
                 let rooms = self.registry(|r| r.list_public());
@@ -314,9 +419,30 @@ impl Hub {
                 // The host check is the registry's, not this layer's.
                 let done = self.registry(|r| r.start(&seat.code, &seat.name));
                 match done {
-                    Ok(()) => self.broadcast_room(&seat.code),
+                    Ok(()) => {
+                        self.broadcast_room(&seat.code);
+                        self.start_match(&seat.code);
+                    }
                     Err(e) => self.refuse(id, start_error(e)),
                 }
+            }
+            ClientMessage::Input { r#move, fire } => {
+                let Some(seat) = self.seat_of(id) else {
+                    return self.refuse(id, "join a room first");
+                };
+                // Plan section 10: the server decides, so unknown bits are
+                // dropped rather than trusted. An input while no match is
+                // running is dropped too: a client sends one per tick, and an
+                // error for each would be noise, not information.
+                let bits = (r#move & MOVE_MASK) | if fire { INPUT_FIRE } else { 0 };
+                self.matches(|m| {
+                    if let Some(tx) = m.get(&seat.code) {
+                        let _ = tx.send(MatchInput {
+                            name: seat.name.clone(),
+                            bits,
+                        });
+                    }
+                });
             }
             ClientMessage::LeaveRoom => {
                 let Some(seat) = self.seat_of(id) else {
@@ -329,9 +455,10 @@ impl Hub {
                     Err(e) => self.refuse(id, join_error(e)),
                 }
             }
-            ClientMessage::Unsupported => {
-                self.refuse(id, "that message is not handled yet: this slice is the lobby only")
-            }
+            ClientMessage::Unsupported => self.refuse(
+                id,
+                "that message is not handled yet: reconnect and swapping come later",
+            ),
         }
     }
 }
@@ -492,9 +619,18 @@ mod tests {
     }
 
     #[test]
-    fn the_messages_this_slice_does_not_answer_read_as_unsupported() {
+    fn an_input_message_reads_as_the_plan_writes_it() {
+        let text = r#"{"type":"input","move":8,"fire":true,"tick":3}"#;
+        let parsed = serde_json::from_str::<ClientMessage>(text).unwrap();
+        assert!(
+            matches!(parsed, ClientMessage::Input { r#move: 8, fire: true }),
+            "the plan's move/fire shape must read, and its tick field is ignored"
+        );
+    }
+
+    #[test]
+    fn the_messages_still_to_come_read_as_unsupported() {
         for text in [
-            r#"{"type":"input","move":1,"fire":false,"tick":3}"#,
             r#"{"type":"reconnect","code":"ABCDE","session_token":"x"}"#,
             r#"{"type":"request_swap"}"#,
             r#"{"type":"nonsense"}"#,

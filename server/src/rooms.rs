@@ -436,6 +436,21 @@ impl Registry {
         Ok(())
     }
 
+    /// Put a finished match's room back in the lobby, so another can start.
+    ///
+    /// Returns false when the room is already gone. What a finished match owes
+    /// its players — final scores, a rematch — is the rounds slice's; the room
+    /// only has to stop being unusable.
+    pub fn finish(&mut self, code: &str) -> bool {
+        match self.rooms.get_mut(code) {
+            Some(room) => {
+                room.status = Status::Waiting;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Public rooms, in-progress ones included and marked, as the plan asks.
     ///
     /// Sorted by code so the list does not jump around: a `HashMap` has no order

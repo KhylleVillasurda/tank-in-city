@@ -8,7 +8,9 @@
 //! Milestone 3 slice 1 is the lobby: codes, the public list, teams, ready
 //! states, and the start check. Slice 2 puts it on a socket: the lobby messages
 //! of plan section 9, and a `room_state` pushed to the room after every change.
-//! The match loop comes next.
+//! Slice 4 is the match loop: one `World` per room, ticked at 60 Hz, with
+//! `input` in and `map` and `snapshot` out. Rounds and win conditions are next.
 
+pub mod matches;
 pub mod rooms;
 pub mod ws;

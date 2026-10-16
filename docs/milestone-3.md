@@ -15,10 +15,14 @@ and a lobby screen in `web/app/lobby/`.
 lives, score and spawn point, a `Setup` that describes a mode, and the snapshot
 layout that carries them. Single Player behaves exactly as it did.
 
+**Slice 4, done:** the match loop. One `World` per room, ticked at 60 Hz, with
+`input` in and `map` and `snapshot` out. A room that starts a match now plays it.
+
 **Status:** code complete and verified by tests, clippy, the binary on a real
-port, and the whole lobby protocol over a real Cloudflare tunnel. **No browser
-has opened the lobby screen yet**, and **no match runs**: a room reaches
-"playing" and stops there, and the engine change is only reachable from tests.
+port, the whole lobby protocol over a real Cloudflare tunnel, and a full 1v1
+match driven by two socket clients. **No browser has opened the lobby screen
+yet**, and **no browser has played a match**: the match page that renders server
+snapshots is the next slice's first job.
 
 ## The checklist, and where each item landed
 
@@ -36,10 +40,12 @@ Plan section 7 lists the Milestone 3 items. Slice 1 covers these:
 | Host passes to next player when host leaves; empty rooms close | `Registry::leave` |
 | Basic structured logging (`tracing`) | `server/src/rooms.rs`, `server/src/main.rs` |
 
-Still open, in the plan's order: the match loop, win conditions, rounds, lives
-and spectating, prediction and interpolation, session tokens and reconnect, and
-the two-browser check. Slice 3 removed the blocker under all of them: the engine
-can now hold several players, so the match loop has something to drive.
+Slice 4 covers one more item from the plan's list: **server runs `game-core`
+natively per room** — `server/src/matches.rs`.
+
+Still open, in the plan's order: win conditions and rounds, lives and spectating,
+prediction and interpolation, session tokens and reconnect, the client page that
+renders a server match, and the two-browser check.
 
 ### Slice 2: the socket
 
@@ -69,7 +75,16 @@ The messages, and what happens to each:
 
 Every message the plan lists but this slice cannot answer is **refused with an
 error rather than ignored**, so a client is never left wondering why nothing
-happened.
+happened. Slice 4 changed three rows of this table:
+
+| Plan section 9 message | Slice 4 |
+|---|---|
+| `input { move, fire, tick }` | handled — `move` and `fire` become the engine's input bits; `tick` is ignored |
+| `map { tiles }` | sent when a match starts and on every stage change |
+| `snapshot { … }` | sent at 20 Hz as the engine's flat state buffer, in a `data` field |
+| `map_event`, `player_*`, `match_over` | still not sent; they need rounds and reconnect |
+
+`reconnect` and `request_swap` are the two messages still refused.
 
 ## Layout added
 
@@ -80,14 +95,16 @@ server/
 │  ├─ lib.rs             # the crate's front door
 │  ├─ main.rs            # binds 127.0.0.1:8080 and serves the router
 │  ├─ rooms.rs           # the room registry
+│  ├─ matches.rs         # the match loop: one World per room, 60 Hz
 │  └─ ws.rs              # the socket: protocol, hub, size and rate limits
 └─ tests/
    ├─ rooms.rs           # one test per room rule
-   └─ ws.rs              # the lobby over a real socket
+   └─ ws.rs              # the lobby, and a match, over a real socket
 
 web/
 ├─ app/lobby/page.tsx    # the lobby screen
-└─ game/lobby.ts         # the message shapes and where the server is
+├─ game/lobby.ts         # the message shapes and where the server is
+└─ scripts/check-match.mjs  # a real match driven by two socket clients
 ```
 
 Plan section 13 draws `server/src/ws/` and `server/src/rooms/` as directories.
@@ -125,12 +142,11 @@ Plan section 3 gives the modes. This is the same table in `Mode`:
 - **A room password is held in memory in plain text and compared exactly.** It
   is a room password, not an account credential, and the client sends it in the
   clear on each join. It is never logged. See `docs/deferred.md`.
-- **Slice 1 does not run `game-core`.** The plan's first Milestone 3 item is
-  "server runs `game-core` natively per room", but the engine is still
-  single-player: one player tank plus AI. A room cannot run a match until the
-  engine holds several players, so the match loop is the next slice and the
-  registry is the one before it. `game-core` is already a dependency, used for
-  the RNG.
+- **Slice 1 does not run `game-core`** (slice 4 does). The plan's first Milestone 3
+  item is "server runs `game-core` natively per room", but the engine was still
+  single-player then: one player tank plus AI. Slice 3 made it hold several
+  players and slice 4 gave it a loop to run in. Up to slice 1, `game-core` was
+  only a dependency for the RNG.
 
 ### Slice 2 decisions
 
@@ -154,9 +170,10 @@ Plan section 3 gives the modes. This is the same table in `Mode`:
   table: it groups by whatever sides are present, which is right for team modes,
   Free For All and Co-op without knowing which is which.
 - **No `session` message yet.** Plan section 9 sends `session { token }` once on
-  join. A token is only useful with the 30-second reconnect, which needs the
-  match loop, so sending one now would be a value nothing can use. The client
-  learns the socket is live from the browser's own `open` event instead.
+  join. A token is only useful with the 30-second reconnect, so sending one now
+  would be a value nothing can use — that is still true with the match loop in.
+  The client learns the socket is live from the browser's own `open` event
+  instead.
 - **The two locks are never held at the same time.** The registry and the client
   map are separate mutexes, and every access goes through a helper that takes and
   releases one. That removes the lock-order question, and nothing is held across
@@ -269,22 +286,35 @@ wasm `tc_step` still takes one input and passes it as a one-element slice.
   — no AI, so zero enemies from the first tick — would have cleared its stage
   instantly. This was caught by the new `a_match_without_the_ai_never_spawns_a_wave_or_clears_a_stage` test.
 - **PvP still cannot be played.** It needs two bases per side and maps to put them
-  on; the stage format has one `#`. That, and the match loop, is the next slice.
+  on; the stage format has one `#`. Slice 4 gave it a loop to run in, so FFA — no
+  base at all — is the mode that works first.
 
 ## Verification performed
 
 ```sh
 cd game-core && cargo test     # 31 engine, 5 stage, 1 size test
 cd game-core && cargo clippy --all-targets
-cd server && cargo test        # 25 room tests, 5 unit tests, 7 socket tests
+cd server && cargo test        # 26 room tests, 10 unit tests, 8 socket tests
 cd server && cargo clippy --all-targets
 cd server && cargo run         # serves /ws and /health on 127.0.0.1:8080
 cd web && npm run check-lobby  # drives the protocol against a running server
+cd web && npm run check-match  # drives a whole match against a running server
 cd web && npm run check        # the wasm ABI, headless
 cd web && npm run check-audio  # the sound triggers, headless
 cd web && npx tsc --noEmit
 cd web && npm run build
 ```
+
+**Slice 4's tests** are in three places. Four unit tests in `matches.rs` cover
+`setup_for`: a 1v1 becomes two sides and no waves, Co-op becomes two players on
+one side with waves, Free For All gives every player a side of its own (and none
+of them the base's or the enemies'), and the room's friendly fire — forced on in
+FFA — reaches the engine. One new room test covers `Registry::finish`, and the
+socket test `a_started_match_sends_the_map_and_snapshots_and_moves_a_player`
+drives a real 1v1 over a socket: a full `MAP_W * MAP_H` tile map with brick and a
+base, snapshots of exactly `SNAP_LEN` ints to both players, and only the tank
+whose player sent `input` moving. `check-match.mjs` is the same claim made from
+outside the process.
 
 **Slice 3's engine tests** (8 new, in `game-core/tests/engine.rs`): a Co-op pair
 starting on two spawns and each driving on its own input, players being solid to
@@ -302,7 +332,7 @@ Co-op pair, on two different spawns.
 `npm run check-audio` prints the same line it did before. The scripted run scores
 the same 2700 points over the same 6000 ticks, from the same seed.
 
-- The 25 room tests are one per rule in plan section 3: code shape and
+- The 26 room tests are one per rule in plan section 3: code shape and
   uniqueness, a seeded registry replaying its codes, the host being a player in
   their own room, join by code and a wrong code, a password being required and an
   empty password counting as none, joins refused after the start, names unique
@@ -313,35 +343,41 @@ the same 2700 points over the same 6000 ticks, from the same seed.
   leaving a room you are not in, start needing every player ready, **only the
   host starting**, 1v1 needing one a side, team modes needing two a side, uneven
   teams starting, Free For All and Co-op needing two, starting a room that does
-  not exist, and the public list showing public rooms with in-progress ones
-  marked and sorted.
-- The 5 unit tests in `ws.rs` cover the wire names, the two messages the client
-  sends as the plan writes them, the unhandled messages reading as unsupported,
-  the room state carrying each player's own side, and the rate limiter.
-- The 7 socket tests in `tests/ws.rs` run the server in-process on a free port
-  with real WebSocket clients: a full 1v1 from create to start, a room in
-  progress refusing a late join, the public list showing a public room and hiding
-  a private one, the host leaving and the room closing when the last player does,
-  a disconnect removing the player, an unhandled message being refused, and one
-  connection being in one room at a time.
+  not exist, a finished match putting the room back in the lobby, and the public
+  list showing public rooms with in-progress ones marked and sorted.
+- The 10 unit tests cover the wire names, the three messages the client sends as
+  the plan writes them, the messages still to come reading as unsupported, the
+  room state carrying each player's own side, the rate limiter, and the four
+  `setup_for` cases above.
+- The 8 socket tests in `tests/ws.rs` run the server in-process on a free port
+  with real WebSocket clients: a full 1v1 from create to start, **the match that
+  then ticks**, a room in progress refusing a late join, the public list showing a
+  public room and hiding a private one, the host leaving and the room closing when
+  the last player does, a disconnect removing the player, an unhandled message
+  being refused, and one connection being in one room at a time.
 - **The binary itself was run**, not just the library: `/health` answered `ok`,
-  and `npm run check-lobby` walked create → join → ready → start → leave against
-  it and printed `lobby ok`.
-- **The same protocol ran over a real Cloudflare quick tunnel**, with
-  `LOBBY_URL=wss://…/ws`, and passed the same way. That is the transport
-  multiplayer will use, proven before the match loop exists.
+  `npm run check-lobby` walked create → join → ready → start → leave against it
+  and printed `lobby ok`, and `npm run check-match` then played a whole 1v1 and
+  printed `input moved the host's tank: x 1536 -> 1572`.
+- **The same lobby protocol ran over a real Cloudflare quick tunnel**, with
+  `LOBBY_URL=wss://…/ws`, and passed the same way. That is the transport the
+  match uses, proven before the match loop existed.
 
 ### What is not verified here
 
 - **No browser has opened `/lobby`.** The page type-checks and builds, and the
   messages it sends are the ones `check-lobby` sends, but no button has been
   clicked and no roster has been seen on screen. That needs the user.
-- **No match.** A room reaches `Playing` and stops there; no `World` is created
-  and no ticks run. The engine can hold six players, but nothing asks it to.
+- **No browser has played a match.** The loop, the `map` and the snapshots are
+  proven over a socket, but the page that renders a server snapshot does not exist
+  yet, so nothing draws one.
 - **Nobody has seen two tanks on screen at once.** The renderer draws every
-  player in the snapshot and the Co-op tests prove the engine moves two, but the
-  only run the browser starts is Single Player. Two tanks side by side needs
-  either the match loop or a temporary local run, and there is no browser here.
+  player in the snapshot, and both the Co-op engine tests and the socket match
+  prove two tanks move independently, but the only run the browser starts is
+  Single Player. Two tanks side by side on screen waits on the match page.
+- **The match loop has never reached `GameOver` on the server.** A real 1v1 takes
+  minutes to run out of lives, so no test or check drives one to the end; the
+  `GameOver` exit and its final snapshot are reasoned about, not observed.
 - **The second `P` on each stage is unchecked by eye.** The stage tests prove the
   two spawns are on empty tiles, distinct, and reachable from each other; whether
   the spot *looks* right next to the base is a matter for the eye.
@@ -353,59 +389,73 @@ the same 2700 points over the same 6000 ticks, from the same seed.
 
 In `docs/deferred.md` under "Server", with the rest of the live list.
 
-## Slice 4: the match loop — the next session
+## Slice 4: the match loop
 
-Not started. This is the brief, so the design does not have to be re-derived.
+One `World` per room, ticked at 60 Hz, taking each player's input and pushing the
+resulting state back out. `server/src/matches.rs` is the whole of it; the socket
+layer gained `input`, `map` and `snapshot`, and nothing else moved.
 
-**What it has to do.** One `World` per room, ticked at 60 Hz on the server,
-taking each player's input and pushing the resulting state back out.
+**How it works.** `start_match` reads the room once — the roster's names in slot
+order and the `Setup` the mode maps to — releases the registry lock, and spawns a
+task. The task owns the `World` and loops on a 60 Hz `tokio::time::interval`,
+sending the flat snapshot every third tick (20 Hz) and the map when `World::stage`
+changes. Input arrives as a message on a channel the Hub holds per room; the loop
+keeps each player's latest one and reuses it every tick, so a dropped or late
+message is harmless (plan section 5, "Missing input").
 
-**What already exists and where it plugs in:**
+**Where each decision the brief left open landed:**
 
-| Piece | Where |
-|---|---|
-| A room that reached `Playing`, and its players with their sides | `server/src/rooms.rs` |
-| The socket, the message types, the hub, the rate limiter | `server/src/ws.rs` |
-| An engine that takes N inputs and holds N players | `game-core`, `World::with_setup` + `step(&[Input])` |
-| The flat `[i32; 191]` state buffer | `World::write_snapshot` |
-| A renderer that draws any `Snapshot` object | `web/game/render.ts` |
+- **One task per room**, not one loop over all rooms. A few rooms is nothing, and
+  a room's failure cannot stall another. `MissedTickBehavior::Delay` on the
+  ticker: a stalled server skips the backlog rather than running it as fast as it
+  can, which would spiral instead of catch up.
+- **20 Hz snapshots.** `SNAPSHOT_HZ` is 20 and `TICKS_PER_SNAPSHOT` is `60/20`, so
+  the snapshot rate stays a divisor of the tick rate and the loop needs no second
+  clock. The plan says 15; 20 is what the brief suggested and it is comfortably
+  under the 120 messages/s cap.
+- **`serde_json` on the flat `[i32; SNAP_LEN]` array**, in a `snapshot { data }`
+  message. No binary frame and no named fields: the offsets are already fixed in
+  `game-core`, and the loop should not reshape state it does not own. A binary
+  frame is a later measurement, not a guess.
+- **`input { move, fire, tick }`.** `move` is the direction bits and `fire` is
+  separate, so the engine's input is `(move & MOVE_MASK) | (fire ? INPUT_FIRE :
+  0)` — masked, not trusted (plan section 10, "Input validation"). `tick` is
+  deliberately not even declared: the loop repeats the last input, so a tick
+  number has nothing to decide, and serde drops a field it does not know.
+- **`setup_for(room)` maps a mode to `Setup`:** `waves` is `Mode::has_ai()`
+  (Co-op only), `friendly_fire` comes from the room, the player count from the
+  roster, and `teams` from each `Player`'s own side. Free For All's
+  `Team::None` becomes `2 + slot`, a side of its own above the two real sides, so
+  no player shares the base's side or the enemies'.
+- **The client's second path is not built here.** A match page still needs to
+  render *server* snapshots with `render.ts`, and there is no browser to check it
+  in. It is the first job of the next slice.
 
-**Decisions to settle first, with a recommendation each:**
+**The trap, and what was done about it.** `World.state == GameOver` says the run
+is over but not *why*: the base falling and every player running out of lives both
+land there, and in a no-waves match nothing else can happen. Rather than guess a
+winner, the loop stops and marks the run over with one last snapshot — the client
+sees `GameOver` and knows the run ended, without being told who won. Reading
+`base_alive` and the lives to name a winner is the rounds slice's job, where a
+round outcome is a real thing.
 
-1. **Where the tick lives.** One `tokio::spawn` task per room, started by
-   `start_match`, using `tokio::time::interval`. A single loop over all rooms is
-   the alternative; one task per room is simpler and a few rooms is nothing.
-2. **How often a snapshot goes out.** Not 60 Hz — 191 ints per player per tick is
-   too much to send. Start at **20 Hz** and let the client interpolate, which is
-   what plan section 5 asks for anyway.
-3. **Snapshot encoding.** Start with `serde_json` on the flat int array. Measure
-   before reaching for a binary frame; a lobby-scale game may never need one.
-4. **Input shape.** `input { move, fire, tick }` per plan section 9. The server
-   keeps the latest input per player and consumes it on the tick, so a dropped or
-   late message is harmless. The existing 120/s cap is comfortably above 60/s.
-5. **Which `Setup` a mode maps to.** `waves` is true only for `Coop`, `teams`
-   comes from each `Player`'s own `team`, `friendly_fire` from the room, and the
-   player count from the roster. Single Player stays exactly as it is.
-6. **The client's second path.** `/game` runs the wasm engine locally. A match
-   needs a page that renders *server* snapshots instead — and `render.ts` already
-   takes a plain `Snapshot` object, so the renderer is reused, not rewritten.
-   `Snapshot` lives in `web/game/wasm.ts`; the wire shape should match it.
+**One thing this slice had to fix that the brief did not mention: a room could
+not be played twice.** A finished match left its room in `Playing`, so nobody
+could join and no new match could start. `Registry::finish` puts it back in
+`Waiting` and the Hub re-broadcasts the lobby state. Final scores and a rematch
+are the rounds slice's.
 
-**What ends a match, and the trap in it.** `World.state == GameOver` means the
-run is over, but it fires for *any* reason: the base falling, every player out of
-lives, and (in a no-waves match) nothing else. A round outcome needs to know
-*which* happened, and the engine does not say. Either read `base_alive` and the
-lives to tell them apart, or have the engine report a reason. Decide this before
-writing the loop, not after.
+**How it was verified without a browser.** `web/scripts/check-match.mjs` (also
+`npm run check-match`): two WebSocket clients, a real room, a real match — the map
+arrives full and with brick and a base, snapshots arrive to both players, and when
+only the host sends `input`, the host's tank moves and the guest's does not. It
+reads the snapshot offsets from the wasm, so no engine number is copied into the
+script. That is the local stand-in for plan section 7's two-browser check, and it
+is how the socket work was proven in slice 2. **Do not call the match done on the
+strength of unit tests alone** — the two-browser check needs the user.
 
-**How to verify it without a browser.** Extend `web/scripts/check-lobby.mjs`
-into a `check-match.mjs`: two WebSocket clients, a real room, a real match, assert
-that snapshots arrive and that a player moves when it sends `input`. That is the
-local stand-in for plan section 7's two-browser check, and it is how the socket
-work was proven in slice 2. **Do not call the match done on the strength of unit
-tests alone** — the two-browser check needs the user.
-
-**Then, in order:** rounds and win conditions (best-of-3, lives and scores reset
+**Then, in order:** the client page that renders a server match (the brief's
+decision 6), then rounds and win conditions (best-of-3, lives and scores reset
 between rounds, the round count carries over), then PvP scoring (500 a kill, 1000
 for a base, -250 for a team kill), then two bases and PvP maps, then spectating.
 `docs/deferred.md` lists each one with what is missing.

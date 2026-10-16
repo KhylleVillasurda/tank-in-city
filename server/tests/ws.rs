@@ -6,9 +6,12 @@
 //! the broadcasts — everything the browser client does. The rules themselves are
 //! covered once in `tests/rooms.rs`; these tests check the wiring.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use game_core::map::Tile;
+use game_core::{INPUT_RIGHT, MAP_H, MAP_W, SNAP_LEN, SNAP_PLAYER, SNAP_PLAYERS_OFFSET};
 use serde_json::Value;
 use server::ws::{self, Hub};
 use tokio::net::{TcpListener, TcpStream};
@@ -34,12 +37,19 @@ async fn start() -> String {
 
 struct Client {
     socket: Socket,
+    /// Messages read while looking for another kind. Kept rather than dropped,
+    /// because once a match is running a `room_state` and a `map` and snapshots
+    /// all arrive together and a test wants each of them.
+    pending: VecDeque<Value>,
 }
 
 impl Client {
     async fn connect(url: &str) -> Self {
         let (socket, _) = connect_async(url).await.unwrap();
-        Self { socket }
+        Self {
+            socket,
+            pending: VecDeque::new(),
+        }
     }
 
     /// Send exactly what a browser client would send.
@@ -59,11 +69,38 @@ impl Client {
         }
     }
 
-    /// The state after an action: wait for the first message, then take the last
-    /// one that arrives with it. An action can push more than one message, and
-    /// which of them arrives last is not something to depend on by hand.
+    /// The next message of `kind`, however many others arrive first.
+    async fn next(&mut self, kind: &str) -> Value {
+        if let Some(i) = self.pending.iter().position(|m| m["type"] == kind) {
+            return self.pending.remove(i).unwrap();
+        }
+        loop {
+            let msg = self.read().await;
+            if msg["type"] == kind {
+                return msg;
+            }
+            self.pending.push_back(msg);
+        }
+    }
+
+    /// The next message of `kind` that `ok` accepts. Stale ones are skipped.
+    async fn until(&mut self, kind: &str, ok: impl Fn(&Value) -> bool) -> Value {
+        loop {
+            let msg = self.next(kind).await;
+            if ok(&msg) {
+                return msg;
+            }
+        }
+    }
+
+    /// The state after an action: the first message, then the last one that
+    /// arrives with it. An action can push more than one message, and which of
+    /// them arrives last is not something to depend on by hand.
     async fn settle(&mut self) -> Value {
-        let mut last = self.read().await;
+        let mut last = match self.pending.pop_front() {
+            Some(msg) => msg,
+            None => self.read().await,
+        };
         while let Ok(msg) = tokio::time::timeout(SETTLE, self.read()).await {
             last = msg;
         }
@@ -99,8 +136,14 @@ async fn started_1v1() -> (String, String, Client, Client) {
     guest.settle().await;
 
     host.send(r#"{"type":"start_match"}"#).await;
-    assert_eq!(host.settle().await["status"], "playing");
-    assert_eq!(guest.settle().await["status"], "playing");
+    // From here the room is a match: a `map`, then snapshots at 20 Hz, so a
+    // test waits for the message it wants instead of for silence.
+    let started = host.until("room_state", |m| m["status"] == "playing").await;
+    assert_eq!(started["players"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        guest.until("room_state", |m| m["status"] == "playing").await["status"],
+        "playing"
+    );
 
     (url, code, host, guest)
 }
@@ -152,8 +195,14 @@ async fn two_players_lobby_and_start_a_1v1() {
     assert_eq!(refused["message"], "only the host can start the match");
 
     host.send(r#"{"type":"start_match"}"#).await;
-    assert_eq!(host.settle().await["status"], "playing");
-    assert_eq!(guest.settle().await["status"], "playing");
+    assert_eq!(
+        host.until("room_state", |m| m["status"] == "playing").await["status"],
+        "playing"
+    );
+    assert_eq!(
+        guest.until("room_state", |m| m["status"] == "playing").await["status"],
+        "playing"
+    );
 }
 
 #[tokio::test]
@@ -252,22 +301,77 @@ async fn a_disconnect_takes_the_player_out_of_the_room() {
 }
 
 #[tokio::test]
-async fn messages_this_slice_does_not_answer_are_refused_not_ignored() {
+async fn the_messages_still_to_come_are_refused_not_ignored() {
     let url = start().await;
     let mut client = Client::connect(&url).await;
 
     client
-        .send(r#"{"type":"input","move":1,"fire":false,"tick":1}"#)
+        .send(r#"{"type":"reconnect","code":"ABCDE","session_token":"x"}"#)
         .await;
     let refused = client.settle().await;
     assert_eq!(refused["type"], "error");
     assert!(
-        refused["message"].as_str().unwrap().contains("lobby only"),
+        refused["message"].as_str().unwrap().contains("not handled yet"),
         "{refused}"
     );
 
     client.send(r#"{"type":"not_a_message"}"#).await;
     assert_eq!(client.settle().await["type"], "error");
+}
+
+#[tokio::test]
+async fn a_started_match_sends_the_map_and_snapshots_and_moves_a_player() {
+    let (_, _code, mut host, mut guest) = started_1v1().await;
+
+    // The full tile map arrives once, when the match starts.
+    let map = host.next("map").await;
+    let tiles: Vec<i64> = map["tiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t.as_i64().unwrap())
+        .collect();
+    assert_eq!(tiles.len(), MAP_W * MAP_H, "one number per tile");
+    assert!(tiles.contains(&(Tile::Brick as i64)), "the stage has bricks");
+    assert!(tiles.contains(&(Tile::Base as i64)), "the stage has a base");
+    // The guest is in the same match and gets it too.
+    assert_eq!(guest.next("map").await, map);
+
+    // Then snapshots, each the flat state buffer with both players in it.
+    let first = host.next("snapshot").await;
+    let data = first["data"].as_array().unwrap();
+    assert_eq!(data.len(), SNAP_LEN, "the flat snapshot buffer");
+    assert!(!guest.next("snapshot").await["data"].as_array().unwrap().is_empty());
+
+    // One player's x, by slot. Players are in roster order, so the host is 0.
+    let x = |msg: &Value, slot: usize| -> i64 {
+        msg["data"][SNAP_PLAYERS_OFFSET + slot * SNAP_PLAYER]
+            .as_i64()
+            .unwrap()
+    };
+    let host_x = x(&first, 0);
+    let guest_x = x(&first, 1);
+
+    // Only the host drives, so only the host's tank may move.
+    host.send(&format!(
+        r#"{{"type":"input","move":{INPUT_RIGHT},"fire":false,"tick":1}}"#
+    ))
+    .await;
+
+    let mut moved = false;
+    for _ in 0..60 {
+        let snap = host.next("snapshot").await;
+        assert_eq!(
+            x(&snap, 1),
+            guest_x,
+            "a player that sent no input must not move"
+        );
+        if x(&snap, 0) > host_x {
+            moved = true;
+            break;
+        }
+    }
+    assert!(moved, "the host's tank never moved after an input");
 }
 
 #[tokio::test]
