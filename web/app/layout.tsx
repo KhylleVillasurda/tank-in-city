@@ -7,9 +7,12 @@ import "./globals.css";
  * than pulled from Google at build time so a build never needs the network.
  */
 const pixel = localFont({
-  src: "./fonts/press-start-2p-latin.woff2",
+  src: "./fonts/press-start-2p.ttf",
   variable: "--font-pixel-face",
   display: "swap",
+  // No Arial metrics stand-in in the stack: a file that fails to load should
+  // land on the site's own monospace face, not on a size-adjusted Arial.
+  adjustFontFallback: false,
 });
 
 export const metadata: Metadata = {

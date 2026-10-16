@@ -11,7 +11,8 @@
 #
 # What friends can actually do is in docs/sharing.md. Short version: Single
 # Player works, and the lobby works — they can create and join a room and see
-# each other. A match does not, because the match loop is not built yet.
+# each other. A match does not render yet: the server runs it, but no match page
+# exists in the browser.
 
 set -euo pipefail
 
@@ -60,8 +61,8 @@ Tunnelling $TARGET to a public https:// link.
   Anyone with the link can reach this machine while it runs, so stop it when
   you are finished.
 
-  Friends can play Single Player, and they can meet you in the lobby. They
-  cannot play a match yet. See docs/sharing.md.
+  Friends can play Single Player, and they can meet you in the lobby. A match
+  runs on the server but has no page to draw it yet. See docs/sharing.md.
 
 EOF
 

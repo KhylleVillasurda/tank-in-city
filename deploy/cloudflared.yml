@@ -19,7 +19,7 @@
 # `cloudflared tunnel list` prints the UUID; the credentials file is written next
 # to it when you create the tunnel.
 
-tunnel: REPLACE-WITH-TUNNEL-UUID
+tunnel: a63139cd-784e-4bdf-aaf9-7c5a21960388
 credentials-file: /home/REPLACE-WITH-YOUR-USER/.cloudflared/REPLACE-WITH-TUNNEL-UUID.json
 
 # cloudflared keeps its own logs down here. It does not log request bodies, so it

@@ -82,7 +82,8 @@ The 13.7 s jingle is the reason the stage-clear screen changed. A 2 s
 auto-advance cut the sound off six times over, so rather than trim the sound the
 game now **stops and waits**: clearing the last enemy shows "Stage clear — click,
 or press Enter, to carry on" and the next stage loads when the player says so.
-The whole jingle plays, for as long as the player wants to hear it. That is an
+The jingle plays in full if the player lets it, and is cut the moment they carry
+on — the rest of it over the next stage is nobody's idea of a victory. That is an
 engine change, not an audio one, and it is written up in `docs/milestone-2.md`.
 
 The engine loop is wired to `tank_moving_by_kenny.ogg`, chosen because Kenney is
@@ -188,9 +189,9 @@ difference between this frame and the last one.
 | An enemy was destroyed | the score went up — a kill is the only thing that scores | `explosion.ogg` |
 | You were destroyed | a life went | `explosion.ogg`, pitched to 0.7 |
 | The base was lost | `base_alive` turned off | `explosion.ogg`, pitched to 0.5 |
-| Stage cleared | state became 1 — and the screen waits for the player, so the jingle is never cut off | `level_cleared.ogg` |
+| Stage cleared | state became 1 | `level_cleared.ogg`, with the run's music faded out underneath it, and cut off when the player carries on |
 | You are driving | your x or y changed since the last frame | `tank_moving_*.ogg`, looped, fading in and out |
-| A run is on screen | the first frame after the context unlocks | the music, looped |
+| A run is on screen | the moment the gesture unlocks the context, or the music finishes decoding — whichever is last | the music, looped (unless switched off) |
 
 Three details worth keeping:
 
@@ -202,6 +203,31 @@ Three details worth keeping:
 - **The engine loop follows the wheels, not being alive.** A drone that runs the
   whole time you are alive is a noise, not a sound effect. It fades in and out
   over 50 ms so a loop that starts or stops does not click.
+
+Two more, added after the first play report:
+
+- **The jingle plays alone.** `level_cleared.ogg` is 13.7 seconds and is the whole
+  point of the stage-clear screen, so the music is faded to zero under it and
+  faded back when the player carries on. The mute is a gain ramp on the running
+  loop, not a stop and restart, so the track comes back at the point it left —
+  a restart would jump back to bar one, which is worse than the overlap it fixes.
+- **The jingle is cut short when the player carries on.** It is the one one-off
+  that keeps a handle on its source, so leaving the stage-clear screen stops it —
+  faded over 50 ms, so the cut does not click — rather than letting the remaining
+  seconds play over the next stage. A jingle that finishes on its own clears the
+  handle, so the next stage clear plays it again.
+- **The music starts with the gesture, not a frame later.** It used to wait for
+  the next frame callback to notice that the context had been unlocked, which
+  costs nothing on its own but stacks on top of the download and decode of a
+  1.46 MB track. Now whichever of the two finishes last starts it: the unlock, or
+  the decode.
+- **The player can switch the music off.** `Sounds::setMusicOff`, driven by the
+  button in the HUD on `/game`, remembered in `localStorage` under
+  `tank-in-city.music`. It is a third reason for the loop to be quiet, next to
+  the stage-clear jingle, and one function — `applyMusicGain` — decides the
+  volume from them, so the switch wins over the jingle ending and the jingle
+  cannot un-mute what the player muted. `npm run check-audio` covers that
+  interaction, not just each half.
 
 Still to add, when the files exist: brick hit, steel hit, power-up appear,
 power-up pickup, game over, menu select.
@@ -238,3 +264,8 @@ engine loop starting and stopping with the wheels.
 
 It cannot say whether a sound is *good*, or whether the mix is right. Nothing on
 this machine can. That is what a play test is for.
+
+It also asserts that the music is muted under the stage-clear jingle and comes
+back after it, that the jingle plays on while the screen is up but is cut when
+the player carries on, and that the music starts at unlock rather than on the
+next frame.

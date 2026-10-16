@@ -18,23 +18,23 @@ export default function Menu() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-8 p-8">
       <div className="boot">
-        <h1 className="font-pixel text-[24px] leading-snug tracking-tight">
+        <h1 className="text-[24px] leading-snug tracking-tight">
           Main menu
         </h1>
         <p className="mt-3 text-sm text-zinc-500">
-          Playing as <b className="text-zinc-300">{name || "guest"}</b>
+          Playing as <span className="text-zinc-300">{name || "guest"}</span>
         </p>
       </div>
 
       <div className="boot flex flex-col gap-3">
         <Link
-          className="border border-emerald-600 bg-emerald-600 px-4 py-3 text-center font-pixel text-xs text-black hover:bg-emerald-500"
+          className="border border-emerald-600 bg-emerald-600 px-4 py-3 text-center text-xs text-black hover:bg-emerald-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
           href="/game"
         >
           Single Player
         </Link>
         <Link
-          className="border border-zinc-700 px-4 py-3 text-center font-pixel text-xs text-zinc-300 hover:border-emerald-600 hover:text-emerald-400"
+          className="border border-zinc-700 px-4 py-3 text-center text-xs text-zinc-300 hover:border-emerald-600 hover:text-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
           href="/lobby"
         >
           Host or Join Room
@@ -52,7 +52,7 @@ export default function Menu() {
 function Disabled({ label, note }: { label: string; note: string }) {
   return (
     <div className="flex items-center justify-between border border-zinc-800 px-4 py-3 text-zinc-600">
-      <span className="font-pixel text-xs">{label}</span>
+      <span className="text-xs">{label}</span>
       <span className="text-xs">{note}</span>
     </div>
   );

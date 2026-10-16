@@ -41,7 +41,13 @@ export class Sounds {
   private consts: Constants;
   private ctx: AudioContext | null = null;
   private buffers = new Map<Name, AudioBuffer>();
-  private music: AudioBufferSourceNode | null = null;
+  private music: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  /** The jingle is playing and wants the floor to itself. */
+  private musicSilenced = false;
+  /** The player turned the music off. Outranks the jingle. */
+  private musicOff = false;
+  /** The stage-clear jingle, kept so carrying on early can cut it off. */
+  private jingle: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private engine: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private engineTail = 0;
   private prev: Snapshot | null = null;
@@ -63,14 +69,20 @@ export class Sounds {
       void fetch(FILES[name])
         .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
         .then((b) => ctx.decodeAudioData(b))
-        .then((buffer) => this.buffers.set(name, buffer))
+        .then((buffer) => {
+          this.buffers.set(name, buffer);
+          // Whichever finishes last — the decode or the gesture — starts the
+          // music. Waiting for the next frame to notice costs the whole fetch
+          // and decode time when a player keys in the moment the page opens.
+          if (name === "music") this.startMusic();
+        })
         // A missing or unplayable file means one silent sound, not a broken game.
         .catch(() => {});
     }
 
     // Any key press or click is the gesture the browser wants. Whichever
     // arrives first resumes the context; the other listener is harmless.
-    const unlock = () => void ctx.resume().catch(() => {});
+    const unlock = () => void ctx.resume().then(() => this.startMusic()).catch(() => {});
     window.addEventListener("keydown", unlock, { once: true });
     window.addEventListener("pointerdown", unlock, { once: true });
   }
@@ -104,9 +116,15 @@ export class Sounds {
     if (totalLives(next) < totalLives(prev)) this.play("explosion", 0.7, 0.8);
     if (prev.baseAlive && !next.baseAlive) this.play("explosion", 0.5);
 
-    if (next.state === stateStageClear && prev.state !== stateStageClear) {
-      this.play("stageClear");
-    }
+    // The jingle is 13.7 seconds long and is the whole point of the stage-clear
+    // screen, so the run's music gets out of its way. The loop keeps its place
+    // and comes back where it left off, which a stop/start would not.
+    const clearing = next.state === stateStageClear;
+    if (clearing && prev.state !== stateStageClear) this.playJingle();
+    // Carrying on before it ends cuts it short: the next stage is not a victory
+    // lap, and the jingle would otherwise play over it.
+    if (!clearing) this.stopJingle();
+    this.setMusicSilenced(clearing);
 
     // The engine follows the wheels, with a short tail so slowing for a corner
     // does not stutter. Nothing moves while paused or off-stage, so it stops.
@@ -121,10 +139,17 @@ export class Sounds {
     else this.stopEngine();
   }
 
+  /** The player's music switch, from the button on the game page. */
+  setMusicOff(off: boolean) {
+    this.musicOff = off;
+    this.applyMusicGain();
+  }
+
   /** Silence everything and release the audio device. */
   stop() {
-    this.music?.stop();
+    this.music?.src.stop();
     this.music = null;
+    this.jingle = null;
     this.stopEngine();
     void this.ctx?.close().catch(() => {});
     this.ctx = null;
@@ -148,6 +173,44 @@ export class Sounds {
     src.start();
   }
 
+  /**
+   * The stage-clear jingle, played alone. Unlike the other one-offs this keeps
+   * its handle, because the player can carry on before it ends.
+   */
+  private playJingle() {
+    const ctx = this.ctx;
+    const buffer = this.buffers.get("stageClear");
+    if (!ctx || !buffer) return;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+
+    const gain = ctx.createGain();
+    src.connect(gain);
+    gain.connect(ctx.destination);
+
+    // A jingle that ends on its own is over, so the next stage clear plays it
+    // again; one that was cut is already forgotten.
+    src.onended = () => {
+      if (this.jingle?.src === src) this.jingle = null;
+    };
+
+    src.start();
+    this.jingle = { src, gain };
+  }
+
+  /** Cut the jingle short, faded so the stop does not click. */
+  private stopJingle() {
+    const ctx = this.ctx;
+    if (!this.jingle || !ctx) return;
+
+    const { src, gain } = this.jingle;
+    this.jingle = null;
+    src.onended = null;
+    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + RAMP_SECONDS);
+    src.stop(ctx.currentTime + RAMP_SECONDS);
+  }
+
   private startMusic() {
     const ctx = this.ctx;
     const buffer = this.buffers.get("music");
@@ -157,13 +220,41 @@ export class Sounds {
     src.buffer = buffer;
     src.loop = true;
 
-    const volume = ctx.createGain();
-    volume.gain.value = MUSIC_GAIN;
+    const gain = ctx.createGain();
+    gain.gain.value = this.musicQuiet() ? 0 : MUSIC_GAIN;
 
-    src.connect(volume);
-    volume.connect(ctx.destination);
+    src.connect(gain);
+    gain.connect(ctx.destination);
     src.start();
-    this.music = src;
+    this.music = { src, gain };
+  }
+
+  /** True while the loop should be silent, for either of the two reasons. */
+  private musicQuiet(): boolean {
+    return this.musicSilenced || this.musicOff;
+  }
+
+  /** Fade the music out over the jingle, and back in after it. */
+  private setMusicSilenced(silenced: boolean) {
+    if (silenced === this.musicSilenced) return;
+    this.musicSilenced = silenced;
+    this.applyMusicGain();
+  }
+
+  /**
+   * The one place that decides how loud the loop should be. Ramps rather than
+   * restarts, so the track keeps its place through both the jingle and the
+   * player's switch.
+   */
+  private applyMusicGain() {
+    const ctx = this.ctx;
+    const gain = this.music?.gain.gain;
+    if (!ctx || !gain) return;
+
+    const target = this.musicQuiet() ? 0 : MUSIC_GAIN;
+    gain.cancelScheduledValues(ctx.currentTime);
+    gain.setValueAtTime(gain.value, ctx.currentTime);
+    gain.linearRampToValueAtTime(target, ctx.currentTime + RAMP_SECONDS);
   }
 
   private startEngine() {

@@ -1,19 +1,27 @@
 @import "tailwindcss";
 
-@theme {
-  /* The 8-bit face. app/layout.tsx loads the file and sets --font-pixel-face,
-     so this stays a plain CSS variable and offline builds keep working. */
-  --font-pixel: var(--font-pixel-face), ui-monospace, monospace;
-}
-
 :root {
   color-scheme: dark;
 }
 
+/*
+ * The 8-bit face is the site's one face. next/font loads it and names it on
+ * <body> as --font-pixel-face, and the monospace face behind it is the fallback
+ * for a file that never loads — so every screen, not just the headings, is in
+ * the same face.
+ *
+ * There is deliberately no Tailwind @theme entry for it: a theme variable is
+ * emitted on :root, one level above where next/font sets the face, and the
+ * reference then fails silently (see handoff.md).
+ *
+ * Press Start 2P has one weight, so never bold it — a synthetic bold blurs the
+ * pixels. Emphasis is a colour, not a weight.
+ */
 body {
   background: #0b0b0f;
   color: #e8e8ea;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-pixel-face), ui-monospace, SFMono-Regular, Menlo,
+    monospace;
 }
 
 canvas {

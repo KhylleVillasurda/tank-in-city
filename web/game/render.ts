@@ -56,6 +56,10 @@ export function createRenderer(
   canvas.width = width;
   canvas.height = height;
 
+  // Canvas text cannot take a CSS class, so the badge letters ask the document
+  // what face the page is set in — the same face, fallback list and all.
+  const face = getComputedStyle(document.body).fontFamily || "monospace";
+
   const to = (v: number) => (v / consts.subpixels) * scale;
 
   function enemyColor(kind: number, hp: number): string {
@@ -108,7 +112,7 @@ export function createRenderer(
     ctx.fillStyle = color;
     ctx.fillRect(px, py, size, size);
     ctx.fillStyle = BACKGROUND;
-    ctx.font = `${Math.floor(size * 0.75)}px monospace`;
+    ctx.font = `${Math.floor(size * 0.75)}px ${face}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(label, px + size / 2, py + size / 2 + 1);

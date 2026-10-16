@@ -17,7 +17,7 @@ condition worth knowing about — see "Licence notes" below.
 | `tank_moving.ogg` | _uploader to fill in_ | samplefocus.com — _sample page URL to fill in_ | Sample Focus Standard Licence |
 | `tank_moving_by_kenny.ogg` | Kenney | [kenney.nl](https://kenney.nl/assets) — _pack name to fill in_ | CC0 1.0 |
 | `Battle_by_PerituneMaterial_8bitRPG.ogg` | PeriTune (Sei Mutsuki / むつき醒) | [peritune.com](https://peritune.com/) — _track page URL to fill in_ | PeriTune terms (see below) |
-| `web/app/fonts/press-start-2p-latin.woff2` | The Press Start 2P Project Authors (cody@zone38.net) | [Google Fonts](https://fonts.google.com/specimen/Press+Start+2P) | SIL Open Font License 1.1 |
+| `web/app/fonts/press-start-2p.ttf` | Cody "CodeMan38" Boisclair (cody@zone38.net) | [fontspace](https://www.fontspace.com/press-start-2p-font-f11591) | SIL Open Font License 1.1 |
 
 The four names left blank are the ones worth pasting in when you have the pages
 open. Uploader names are not required by any of these licences, but the plan
@@ -58,8 +58,9 @@ condition in both cases: **do not hand the raw sound file to the public.**
   embed, including commercially, and no visible credit is required — the licence
   lives beside the file in `web/app/fonts/OFL.txt` and it is credited here
   anyway, because plan §12 asks for an author on every asset. It is vendored
-  rather than fetched from Google at build time, so a build never needs the
-  network.
+  rather than fetched from a font service at build time, so a build never needs
+  the network. The copy shipped is the full TTF from fontspace (v2.0, 82 KB),
+  not the Latin subset from Google Fonts (v3.0, 12 KB) that it replaced.
 
 **What this means in practice.** For a free game, credit them and carry on.
 Serving audio from `/audio/*.ogg` is the only way a browser can play it, so the

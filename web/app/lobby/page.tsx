@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import Check from "@/components/Check";
+import Select from "@/components/Select";
 import { guestName } from "@/game/guest";
 import {
   MODE_LABELS,
@@ -17,18 +19,20 @@ import {
 const MODES = Object.keys(MODE_LABELS) as Mode[];
 
 const BUTTON =
-  "border border-zinc-700 px-3 py-2 font-pixel text-xs text-zinc-300 hover:border-emerald-600 hover:text-emerald-400 disabled:border-zinc-900 disabled:text-zinc-700";
+  "border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:border-emerald-600 hover:text-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 disabled:border-zinc-900 disabled:text-zinc-700";
 const GO =
-  "border border-emerald-600 bg-emerald-600 px-4 py-3 text-center font-pixel text-xs text-black hover:bg-emerald-500";
-const FIELD = "border border-zinc-800 bg-black px-3 py-2 text-sm text-zinc-200";
+  "border border-emerald-600 bg-emerald-600 px-4 py-3 text-center text-xs text-black hover:bg-emerald-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500";
+const FIELD =
+  "border border-zinc-800 bg-black px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-emerald-600 focus:outline-none";
 
 /**
  * The lobby (plan section 3). It speaks the protocol in `game/lobby.ts` and
  * decides nothing itself: the server owns the room, the sides and the start
  * rules, and pushes a fresh `room_state` after every change.
  *
- * A match cannot run yet — the engine is single player — so "start" moves the
- * room to `playing` and that is as far as this slice goes.
+ * A match runs on the server once the host starts one, but this page has no
+ * match screen to hand it to yet, so "start" moves the room to `playing` and
+ * that is as far as it goes.
  */
 export default function Lobby() {
   const socket = useRef<WebSocket | null>(null);
@@ -109,9 +113,9 @@ export default function Lobby() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col justify-center gap-6 p-8">
       <div className="boot">
-        <h1 className="font-pixel text-[24px] leading-snug tracking-tight">Lobby</h1>
+        <h1 className="text-[24px] leading-snug tracking-tight">Lobby</h1>
         <p className="mt-3 text-sm text-zinc-500">
-          Playing as <b className="text-zinc-300">{name || "guest"}</b>{" "}
+          Playing as <span className="text-zinc-300">{name || "guest"}</span>{" "}
           <span className={connected ? "text-emerald-400" : "text-zinc-500"}>
             {connected ? "connected" : "connecting"}
           </span>
@@ -126,7 +130,7 @@ export default function Lobby() {
       {room ? (
         <div className="boot flex flex-col gap-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="font-pixel text-[16px] tracking-widest">{room.code}</p>
+            <p className="text-[16px] tracking-widest">{room.code}</p>
             <p className="text-sm text-zinc-500">
               {MODE_LABELS[room.mode]} · friendly fire{" "}
               {room.friendly_fire ? "on" : "off"} · {room.status}
@@ -183,44 +187,27 @@ export default function Lobby() {
 
           {room.status === "playing" && (
             <p className="text-sm text-zinc-500">
-              The match loop is not built yet, so this is where a room stops.
+              The match is running on the server. This page cannot draw it yet —
+              the match screen is the next thing to build.
             </p>
           )}
         </div>
       ) : (
         <div className="boot flex flex-col gap-6">
           <div className="flex flex-col gap-3">
-            <p className="font-pixel text-[10px] text-zinc-400">Host a room</p>
-            <label className="flex items-center justify-between border border-zinc-800 px-3 py-2 text-sm text-zinc-400">
-              Mode
-              <select
-                className={FIELD}
-                value={mode}
-                onChange={(e) => setMode(e.target.value as Mode)}
-              >
-                {MODES.map((m) => (
-                  <option key={m} value={m}>
-                    {MODE_LABELS[m]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex items-center gap-3 text-sm text-zinc-400">
-              <input
-                type="checkbox"
-                checked={isPublic}
-                onChange={(e) => setIsPublic(e.target.checked)}
-              />
+            <p className="text-[10px] text-zinc-400">Host a room</p>
+            <Select
+              label="Mode"
+              value={mode}
+              options={MODES.map((m) => ({ value: m, label: MODE_LABELS[m] }))}
+              onChange={setMode}
+            />
+            <Check checked={isPublic} onChange={setIsPublic}>
               List it publicly
-            </label>
-            <label className="flex items-center gap-3 text-sm text-zinc-400">
-              <input
-                type="checkbox"
-                checked={friendlyFire}
-                onChange={(e) => setFriendlyFire(e.target.checked)}
-              />
+            </Check>
+            <Check checked={friendlyFire} onChange={setFriendlyFire}>
               Friendly fire (Free For All forces it on)
-            </label>
+            </Check>
             <input
               className={FIELD}
               value={password}
@@ -245,7 +232,7 @@ export default function Lobby() {
           </div>
 
           <div className="flex flex-col gap-3">
-            <p className="font-pixel text-[10px] text-zinc-400">Join a room</p>
+            <p className="text-[10px] text-zinc-400">Join a room</p>
             <div className="flex gap-2">
               <input
                 className={`${FIELD} flex-1 tracking-widest`}
@@ -264,7 +251,7 @@ export default function Lobby() {
           </div>
 
           <div className="flex flex-col gap-2">
-            <p className="font-pixel text-[10px] text-zinc-400">Public rooms</p>
+            <p className="text-[10px] text-zinc-400">Public rooms</p>
             {rooms.length === 0 ? (
               <p className="text-sm text-zinc-600">
                 None right now. This refreshes every 3 seconds.
@@ -277,7 +264,7 @@ export default function Lobby() {
                     className="flex items-center justify-between gap-2 border border-zinc-800 px-3 py-2"
                   >
                     <span className="text-sm">
-                      <b className="font-pixel text-[10px] tracking-widest">{r.code}</b>{" "}
+                      <span className="text-[10px] tracking-widest">{r.code}</span>{" "}
                       <span className="text-zinc-500">
                         {r.host} · {MODE_LABELS[r.mode]} · {r.players} playing ·{" "}
                         {r.status}

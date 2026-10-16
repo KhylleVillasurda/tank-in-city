@@ -46,15 +46,28 @@ three fifths of the list are done by reuse rather than by new files.
   `docs/sprites.md`** — draw to that spec so nothing has to guess.
 - **The in-game credits page.** Plan §12 wants one, reading from `CREDITS.md`.
   Milestone 5.
-- **More 8-bit dressing, if wanted.** Today: scanlines, a blinking prompt, a
-  four-step entrance, and Press Start 2P on headings and buttons. Obvious next
-  candidates are a stepped typewriter reveal on the title, a CRT flicker on
-  stage clear, and an arcade "insert coin" attract loop. The rule to keep: snap
-  between states with `steps()`, never ease — smooth motion is the one thing an
-  8-bit machine could not do.
-- **`shadcn/ui`** is still not installed. The title screen and menu are three
-  buttons and a heading; a component library would be more code than the thing it
-  replaces.
+- **More 8-bit dressing, if wanted.** Today: scanlines, a blinking `> insert
+  coin` prompt, a four-step entrance, and Press Start 2P on every screen. Obvious
+  next candidates are a stepped typewriter reveal on the title, a CRT flicker on
+  stage clear, and a real attract loop behind the prompt — the words are arcade,
+  but nothing plays behind them yet. The rule to keep: snap between states with
+  `steps()`, never ease — smooth motion is the one thing an 8-bit machine could
+  not do.
+- **`shadcn/ui`** is still not installed, and now definitely will not be. The
+  lobby's dropdown and checkboxes are site components instead — `Select` and
+  `Check` in `web/components/`. The checkbox is a real `<input>` with
+  `appearance-none`, so the browser keeps the label, the space bar and the form
+  value and only the square is replaced. The dropdown could not be done that way:
+  an OS-drawn `<select>` popup cannot be styled at all, so `Select` re-implements
+  what a native one gives away — listbox roles, arrows, Enter, Escape, and a
+  click outside to dismiss. Add a third one only when a third control needs it.
+- **No favicon.** Every page 404s on `/favicon.ico`: the tab shows the default
+  glyph and the console logs an error. Needs an icon — an 8x8 tank in the game's
+  palette as `app/icon.svg` would match the rest of the dressing.
+- **Small text is off the face's 8px grid.** `text-xs` (12px) and `text-sm` (14px)
+  are not multiples of 8, so the small type is a little soft next to the crisp
+  32px title. 16px would be crisp but ~30% wider and would move every layout, so
+  it waits for the user's verdict after their play test rather than being guessed.
 
 ## Engine
 
@@ -88,21 +101,35 @@ three fifths of the list are done by reuse rather than by new files.
 
 ## Server
 
-Milestone 3 slices 1, 2 and 3 (the lobby, the socket under it, and the engine
-holding several players) are in. These are what they left out on purpose.
+Milestone 3 slices 1, 2, 3 and 4 (the lobby, the socket under it, the engine
+holding several players, and the match loop) are in. These are what they left out
+on purpose.
 
-- **The match loop.** A room reaches `Playing` and stops. `game-core` can now
-  hold six players with per-player input, lives, score and sides, but nothing
-  constructs a `World` for a room and no ticks run. The match loop is the next
-  slice: one `World` per room, a 60 Hz tick, `input` messages in and `snapshot`
-  messages out.
+- **The match page.** `/game` runs the wasm engine locally and the lobby screen is
+  on a socket, but nothing renders a *server* match. A page that takes the flat
+  `snapshot` from the socket and draws it with `render.ts` (which already takes a
+  plain `Snapshot` object) is the first job of the next slice. Until it exists,
+  the only way to play a match is two socket clients — `npm run check-match`.
 - **Rounds.** Plan section 6: best-of-3, a round ends when a base falls or a side
   is out of lives, lives and scores reset between rounds, the round count carries
-  over. None of it exists.
-- **Every message that needs a running match.** `input`, `reconnect` and
-  `request_swap` are refused with an error rather than ignored. `map`,
-  `snapshot`, `map_event`, `player_disconnected`, `player_reconnected`,
-  `player_eliminated` and `match_over` are not sent at all.
+  over. None of it exists. The loop stops the moment `World::state` becomes
+  `GameOver`, which is the end of the whole run.
+- **`match_over`, and what a finished match owes its players.** The loop ends and
+  puts the room back in the lobby (`Registry::finish`), and the last snapshot
+  carries `GameOver`, so a client knows the run ended. It is not told *who won*:
+  `GameOver` fires for the base falling and for every player running out of lives
+  alike, and the engine does not say which. Naming a winner, and sending
+  `match_over { winner, scores }`, belongs with rounds.
+- **Every message that still needs a running match.** `reconnect` and
+  `request_swap` are refused with an error rather than ignored. `map_event`,
+  `player_disconnected`, `player_reconnected` and `player_eliminated` are not sent
+  at all.
+- **A player who leaves mid-match leaves the room, not the match.** The socket's
+  `leave_room` removes them from the room, so the lobby roster shrinks, but the
+  running `World` keeps their tank where it was and it stops receiving input — it
+  just idles. That is the plan's "disconnected or quitting players keep the
+  contribution they had when they left", minus the contribution, and it is what
+  spectating and elimination will replace.
 - **Kicking.** Plan section 10 gives the host a kick before the match starts. It
   is not in the protocol and not built.
 - **A name filter.** Plan section 10 asks for "a basic filter for obvious slurs"
@@ -142,7 +169,7 @@ Scheduled in `plan.md`, listed here only so this file is the one place to look.
 
 | Skipped | Arrives in |
 |---|---|
-| Rooms, hosting, joining, the match loop, client prediction, server authority | Milestone 3 (the lobby, its socket, and several players in the engine are done; see "Server" above) |
+| Rooms, hosting, joining, the match loop, server authority | Milestone 3 (the lobby, its socket, several players in the engine, and the match loop are done; the match page, rounds and prediction are not; see "Server" above) |
 | Accounts, email verification, profiles, friends, chat, spectating | Milestone 4 |
 | Local and online leaderboards, persistent scores | Milestone 4 |
 | Sprites, the credits page | Milestone 5 |

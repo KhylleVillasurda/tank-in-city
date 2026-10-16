@@ -1,8 +1,8 @@
 # Handoff
 
 Read this first. It is the state of the project at the end of the session that
-taught the engine to hold several players, written for whoever picks it up next —
-human or AI.
+taught the server to run a match, written for whoever picks it up next — human or
+AI.
 
 Everything here was checked, not remembered. Where a fact lives in another file,
 this points at it instead of copying it, so the two cannot drift apart.
@@ -18,18 +18,24 @@ rules, milestones, repo layout. Read it before proposing anything.
 | 2 — Single Player | done, play-tested, closed |
 | 5 — sound | **pulled forward and working**, six of twelve files still missing |
 | 5 — sprites and the credits page | not started |
-| 3 — rooms and netplay | **slices 1, 2 and 3 done** (the lobby, the socket under it, and the engine holding several players); the match loop is next |
+| 3 — rooms and netplay | **slices 1, 2, 3 and 4 done** (the lobby, the socket under it, the engine holding several players, and the match loop); the match page a browser can watch is next |
 | 4 — accounts and leaderboards | not started |
 
-One mode exists (Single Player). What the engine needs to know about any other
-mode travels in a `Setup` struct — player count, whether the AI waves run,
-whether friendly fire is on, and which side each player is on. Everything else
-in plan section 6 (rounds, timers, spectating, match scoring) is the match loop's.
+One mode is playable in a browser (Single Player). What the engine needs to know
+about any other mode travels in a `Setup` struct — player count, whether the AI
+waves run, whether friendly fire is on, and which side each player is on; the
+mode table is the server's, and `matches::setup_for` is the one place the two are
+translated. A server room can run a Co-op, FFA or team match today. Everything
+else in plan section 6 (rounds, timers, spectating, match scoring) is still to
+come, and is the next slice's.
 
 `server/` exists now and listens. It is a second Rust crate beside `game-core`,
 with **no Cargo workspace** — a path dependency, so the wasm build script is
 untouched. `cd server && cargo run` serves the lobby socket on `/ws` and a
-`/health` check on `127.0.0.1:8080`. Nothing runs a match yet.
+`/health` check on `127.0.0.1:8080`. **It runs a match now:** `start_match`
+spawns a task per room with one `World`, ticked at 60 Hz, taking `input` and
+sending `map` and `snapshot`. Nothing renders it in a browser yet; two socket
+clients can, and `npm run check-match` is one.
 
 ## Read these, in this order
 
@@ -48,13 +54,97 @@ untouched. `cd server && cargo run` serves the lobby socket on `/ws` and a
    placing any sprite.
 9. `docs/milestone-3.md` — the server, the lobby rules, the socket, the engine's
    several-players change, and what each slice left out.
-10. `docs/sharing.md` — how to put the game on a public link with cloudflared, so
+10. `docs/running.md` — **one page: build, run, check, share.** Read it first if
+    you need to start anything; it is the short version of the two below.
+11. `docs/sharing.md` — how to put the game on a public link with cloudflared, so
     friends can open it without a deployment. Read it before testing with
     anyone: it says what friends can and cannot do today.
 
 ## What the last session changed
 
 Do not redo these; build on them.
+
+- **The match loop exists.** `server/src/matches.rs` is new: one `tokio` task per
+  room, one `World::with_setup` per match, a 60 Hz `interval`, and a snapshot
+  every third tick (20 Hz). `Hub::start_match` spawns it when `Registry::start`
+  succeeds. The socket gained `input` in and `map` + `snapshot` out; `reconnect`
+  and `request_swap` are the only refusals left.
+- **The wire is the engine's flat buffer.** `snapshot { data: [i32; SNAP_LEN] }`,
+  `serde_json`, offsets unchanged. `map { tiles: [u8; MAP_W*MAP_H] }` goes out
+  when the match starts and when `World::stage` changes — which, with no waves,
+  is never, so the map's stage-change path is only reachable in Co-op.
+- **`input` is `{ move, fire }`**, and `tick` is deliberately not declared:
+  `move` is masked to the four direction bits and `fire` adds `INPUT_FIRE`, so
+  `(move & MOVE_MASK) | fire`. The loop keeps each player's latest input and
+  reuses it, so a tick number has nothing to decide.
+- **A finished match puts the room back in the lobby.** `Registry::finish` sets
+  `Status::Waiting`; without it a played room could never be joined or started
+  again. The loop's last snapshot carries `GameOver`. It does **not** name a
+  winner: `GameOver` fires for the base falling and for everyone running out of
+  lives alike, and the engine does not say which. That is the rounds slice's.
+- **`check-match.mjs`** (`npm run check-match`) is new: two WebSocket clients, a
+  real 1v1, asserting the map, the snapshots, and that only the player who sent
+  `input` moves. It reads the snapshot offsets from the wasm, so no engine number
+  is copied into the script.
+- **`tests/ws.rs` had to stop waiting for silence.** `settle()` drained messages
+  until a 50 ms gap, which never comes once snapshots stream at 20 Hz. The test
+  client now has `next(type)` and `until(type, ok)` with a pending queue, and
+  `settle()` is only used before a match starts. Any new socket test after
+  `start_match` must use the same two.
+- **`CONSTANTS_FIELDS` in `web/game/wasm.ts` is exported now**, so
+  `check-match.mjs` reads the constants list from the one source instead of
+  copying it a fourth time.
+- **The stage-clear jingle plays alone, and is cut when the player carries on.**
+  It used to run over the looping music. `Sounds::setMusicSilenced` ramps the
+  music gain to zero while state is `stageClear` and back afterwards — a ramp on
+  the running loop, not a stop and restart, so the track resumes where it left
+  off instead of at bar one. The music also now starts from whichever finishes
+  last, the unlock or the decode, rather than a frame later. The jingle itself
+  keeps a handle on its source (`playJingle`/`stopJingle`) so leaving the screen
+  stops 13.7 seconds of victory music rather than playing it over the next stage.
+  `npm run check-audio` asserts all of it.
+- **The lobby's dropdown and checkboxes are site components.**
+  `web/components/Select.tsx` and `web/components/Check.tsx`. The native
+  `<select>` popup is OS-drawn and cannot be styled, so `Select` re-implements
+  the listbox keyboard behaviour; `Check` is a real `<input>` with
+  `appearance-none`, so only the square changes. Text inputs and every button
+  got a site focus ring (`focus-visible:outline-emerald-500`, and a border colour
+  on `FIELD` in `web/app/lobby/page.tsx`) instead of the browser's default one.
+- **The player's music switch is remembered, and outranks the jingle.** A button
+  in the HUD on `/game` (`Music on` / `Music off`), stored in `localStorage` as
+  `tank-in-city.music`. `Sounds::setMusicOff` sets one of two flags and
+  `applyMusicGain` turns them into a gain ramp, so a stage clear ending cannot
+  un-mute what the player muted. `check-audio.mjs` asserts that interaction.
+- **Lives are boxes, not a number.** `Lives` in `web/components/GameCanvas.tsx`
+  draws one box per remaining life (3 at the start, from `START_LIVES`), the way
+  Battle City did. The count is unchanged — it is the same `players[0].lives`
+  the HUD printed — and the boxes carry one `aria-label` so a screen reader hears
+  "3 lives left" instead of a row of empty spans.
+- **The user's tunnel is now dashboard-managed, not config-file.** Their
+  `cloudflared.service` runs with the token in the systemd unit, so
+  `~/.cloudflared/` is empty and `deploy/cloudflared.yml` is **not in use** —
+  do not edit it expecting the live tunnel to change. Its routes are **Networking
+  → Tunnels → Routes → Add route → Published application**: `/ws` →
+  `http://localhost:8080` **added first**, then the bare hostname →
+  `http://localhost:3000`. `docs/sharing.md` has both flows.
+- **The frontend was finally looked at in a real browser** (Playwright MCP; recipe
+  in "How to verify", setup in "Traps"). Every page reports
+  `font-family: pixel, …` with the face `loaded` — the first real proof the font
+  fix works, after two rounds of static checking — and the HUD, menu and lobby have
+  no clipped or overflowing text. The lobby's hand-rolled `Select` opens on click,
+  moves with ArrowDown and picks with Enter, with `aria-expanded` and
+  `aria-activedescendant` correct at each step. Tab reaches *Play as guest* with a
+  visible 2px ring and Enter follows it, so the "press start" confusion is gone in
+  the keyboard path too. The music switch flips `Music on`/`Music off` and writes
+  `tank-in-city.music`, and `/game` logs no errors and draws. One defect it found
+  is fixed: under the wider pixel face the *Create an account* row wrapped its
+  label mid-phrase, so `Disabled` in `web/app/page.tsx` now keeps the label whole
+  and drops the note onto its own line. Left over: `/favicon.ico` 404s on every
+  page (`docs/deferred.md`).
+
+## What the session before changed
+
+Do not redo these either.
 
 - **Sound, end to end.** `web/game/audio.ts` is new. There is **no engine
   change** behind it: it diffs consecutive snapshots. Called from the frame
@@ -70,7 +160,33 @@ Do not redo these; build on them.
   together.
 - **A pixel font and three animations.** Press Start 2P, vendored in
   `web/app/fonts/` with its OFL licence. Scanlines, a blinking prompt, and a
-  four-step entrance — all snapping with `steps()`, never easing.
+  four-step entrance — all snapping with `steps()`, never easing. The prompt
+  reads `> insert coin`; it used to say "press start", which promises that Enter
+  starts the game, and nothing did (the button below does).
+- **The pixel font was never actually rendering.** The file was fine; the wiring
+  was not. `next/font` sets `--font-pixel-face` on `<body>`, while Tailwind's
+  `@theme` emitted `--font-pixel: var(--font-pixel-face), ...` on `:root`, one
+  level above where that name exists — so the utility went invalid at
+  computed-value time and every pixel-font element quietly kept the body font.
+  There is no `@theme` entry for the face at all now: `globals.css` puts the
+  stack on `body`, the element next/font sets the variable on. Still checkable
+  without a browser — the built CSS must read
+  `body{font-family:var(--font-pixel-face), ui-monospace, ...}`.
+- **The 8-bit face is the site's one face.** One rule in `globals.css` now covers
+  the HUD, both menus, the overlays and the lobby, and the per-element
+  `font-pixel` classes are gone with it. Two consequences worth keeping:
+  **never bold anything** — Press Start 2P has one weight, so `<b>` and
+  `font-bold` only blur the pixels, and emphasis is a colour (five `<b>`s became
+  `<span>`s for this) — and **canvas text cannot take a class**, so `render.ts`
+  reads the face off `document.body` with `getComputedStyle` for the spawn and
+  power-up letters it draws inside the canvas.
+- **The font file was swapped for the full TTF the user supplied**
+  (`web/app/fonts/press-start-2p.ttf`, fontspace v2.0, 82 KB), replacing the
+  Google Fonts Latin subset (v3.0, 12 KB). Same typeface; the swap costs 70 KB
+  and buys the non-Latin glyphs. Its own OFL text was copied to
+  `web/app/fonts/OFL.txt` (that build reserves the name "Press Start", not "Press
+  Start 2P") and the `CREDITS.md` row now points at fontspace. The old file is
+  recoverable from commit `98e89af` if the size matters later.
 - **The state types were narrowed.** Every field now carries the narrowest type
   that holds its longest value: the `Tank` counters, the `World` counters, and the
   tile indices (`steel_tiles` alone went 128 bytes to 32). `World` went from
@@ -93,8 +209,8 @@ Do not redo these; build on them.
   `tracing`). Codes, the public room list, teams, ready states, host transfer,
   and the start check — every rule in plan section 3 that needs no socket. 25
   tests, one per rule. `docs/milestone-3.md` has the decisions and what each
-  slice left out. **It does not run a match yet:** nothing constructs a `World`
-  for a room.
+  slice left out. **Then it did not run a match yet:** nothing constructed a
+  `World` for a room. The match loop above is what changed that.
 - **Sharing over a Cloudflare tunnel.** `web/scripts/share.sh` (also `npm run
   share`) starts a quick tunnel to the web app and refuses to start if nothing
   answers on the port. `deploy/cloudflared.yml` is the named-tunnel config: it
@@ -147,7 +263,7 @@ All of these must pass before a change is called done.
 ```sh
 cd game-core && cargo test          # 37 tests: 31 engine, 1 sizes, 5 stage data
 cd game-core && cargo clippy --all-targets   # must be silent
-cd server && cargo test             # 37 tests: 25 room rules, 5 socket units, 7 socket
+cd server && cargo test             # 44 tests: 26 room rules, 10 unit, 8 socket
 cd server && cargo clippy --all-targets      # must be silent
 cd web && npm run check             # headless wasm ABI and rules
 cd web && npm run check-audio       # headless sound triggers
@@ -160,7 +276,15 @@ the socket cannot be checked any other way:
 
 ```sh
 cd web && npm run check-lobby       # drives the whole lobby protocol
+cd web && npm run check-match       # plays a whole 1v1 over the socket
 ```
+
+Then, when the change is visual (font, layout, focus, a form control), look at it
+in a real browser through the Playwright MCP server: `cd web && npm run build &&
+npx next start -p 3009`, then navigate to `http://localhost:3009/`, evaluate for
+computed styles and overflow, and screenshot into `.playwright-mcp/`. The window
+opens on the user's screen, and it plays sound through their speakers — mute
+before driving `/game`.
 
 Then, because code changed:
 
@@ -168,12 +292,14 @@ Then, because code changed:
 graphify update .
 ```
 
-Current state: 37 tests pass in `game-core` and 37 in `server`, no compiler
+Current state: 37 tests pass in `game-core` and 44 in `server`, no compiler
 warnings and clippy is silent in both, `npm run check` reports
-`wasm ABI ok: score=2700 lives=1 stage=1 enemiesLeft=4 idleGameOver=30s`,
-`npm run check-audio` reports `audio ok`, `npm run check-lobby` reports
-`lobby ok`, `tsc` and `build` are clean, and the graph was 848 nodes / 1354 edges
-/ 44 communities at the last update.
+`wasm ABI ok: score=2700 lives=1 stage=1 enemiesLeft=4 idleGameOver=30s
+statesSeen=0,2`, `npm run check-audio` reports `audio ok`, `npm run check-lobby`
+reports `lobby ok`, `npm run check-match` reports
+`input moved the host's tank: x 1536 -> 1572`, `tsc` and `build` are clean, and
+the graph was 848 nodes / 1354 edges / 44 communities before this session's
+update.
 
 `score=2700 lives=1` in that line is worth knowing: it is the *same* number the
 check printed before the several-players change, from the same seed over the same
@@ -207,10 +333,18 @@ it did.
   changes the ABI, not just the struct. See the layout table in
   `docs/milestone-3.md` for the current one, and `docs/milestone-2.md` for the
   type-size reasoning.
-- **There is no browser or speaker in this environment.** Frontend and audio
-  claims here can only be static (`tsc`, `build`, `curl`, the two check
-  scripts). Only the user's play reports are human evidence, so ask for one and
-  give them a `?seed=` to reproduce with.
+- **There IS a browser now — a frontend claim is checkable, so check it.** The
+  Playwright MCP server (added 2026-10-17) is in
+  `~/.config/opencode/opencode.jsonc`. It needs `--executable-path` pointing at
+  `~/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome`: its default is the
+  `chrome` **channel** (system Chrome, not installed) and `--browser` has no
+  `chromium` choice. Start `next start -p 3009` and drive that: computed styles,
+  `document.fonts`, layout overflow, console errors, clicks and key presses all
+  work, and a screenshot comes back as an image you can look at. Screenshots only
+  land inside the workspace (`.playwright-mcp/`, gitignored). Still **no speaker**:
+  the sound the browser makes comes out of the *user's* speakers, so mute before
+  driving the game (`localStorage["tank-in-city.music"] = "off"`, then load) or ask
+  their ear.
 - **Do not delete `web/.next` while the user's `next dev` is running.** It
   desyncs that server's cache: the last session did it, and the root layout went
   stale while pages updated, which looks exactly like a broken change. If it
@@ -221,41 +355,89 @@ it did.
   purpose. Do not "tidy" it back.
 - **Audio cannot be judged here.** Verify a trigger with `npm run check-audio`;
   never claim a sound "sounds right".
+- **Do not reach for a native form control.** An OS-drawn `<select>` popup cannot
+  be styled, so the site's dropdown is `web/components/Select.tsx`; checkboxes
+  are `web/components/Check.tsx`. A `<select>` that reappears in a page is a
+  regression, not a shortcut.
 - **`web/AGENTS.md` is generated by `next dev`, and is committed on purpose.**
   Next 16 writes its own agent-rules block there on every dev run. Deleting it
   only brings it back as an uncommitted change. Leave it.
-- **The work is committed.** `main` (renamed from `master`) has six commits: the
-  plan, then "Add Milestones 1 and 2: engine, single player, audio,
-  presentation", then "Add Milestone 3 slice 1: the server crate and the room
-  registry", then the clippy fixes, then the tunnel work, then the lobby socket
-  (HEAD). `git log --oneline` has the hashes — this file deliberately does not,
-  because amending a commit changes them. There is no remote yet.
+- **Everything up to the slice 4 brief is committed; slice 4 is not.** `main`
+  (renamed from `master`) ends with the lobby socket, then the brief for the match
+  loop, then a graph-numbers refresh (HEAD). The match loop (slice 4) is
+  **uncommitted working tree** — commit it before starting the next slice.
+  `git log --oneline` has the hashes — this file deliberately does not, because
+  amending a commit changes them. There is no remote yet.
   `graphify-out/`, `web/public/game_core.wasm` and the raw audio in `assets/` are
   generated or deliberately excluded and stay ignored.
 - **There are two Rust crates and no Cargo workspace.** `game-core/` and
   `server/`, each with its own `Cargo.lock` and `target/`. `server/` reaches
   `game-core` by path. Adding a workspace would move the build target directory
   and touch `web/scripts/build-wasm.sh`, which works — do not add one casually.
-- **`server/` does not run a match.** Nothing constructs a `World` for a room, so
-  a room reaches `Playing` and stops. The engine *can* hold a match now
-  (`World::with_setup` plus `step(&inputs)`), so the missing piece is the loop
-  itself, not the simulation.
+- **`server/` runs a match now, and the loop is one task per room.**
+  `Hub::start_match` reads the room under the registry lock, releases it, and
+  spawns `matches::run` with the roster and the `Setup`. The task owns the
+  `World`; the Hub only keeps a channel so an `input` can reach it. Two traps
+  live here: an `input` for a player not in the roster is dropped (the roster is
+  captured at start, so a mid-match leaver does not renumber anyone), and a
+  finished match leaves its sender in `Hub::matches` — the next `start_match` for
+  that code overwrites it, and a send into a dead one is ignored on purpose.
+- **`settle()` is useless once a match is running.** It waits for a 50 ms gap in
+  messages, and snapshots arrive every 50 ms, so it may never return. Use
+  `Client::next(type)` / `until(type, ok)` in `tests/ws.rs` after `start_match`.
+- **A finished match must not leave the room unusable.** A room that played a
+  match used to stay `Playing` forever, so nobody could join it and no new match
+  could start: `Registry::finish` now puts it back in `Waiting` and the Hub
+  re-broadcasts the lobby state. If you add rounds, that is where post-match
+  belongs.
+- **`GameOver` does not name a winner.** It fires for the base falling and for
+  every player running out of lives alike. The loop stops and sends one last
+  snapshot; anything that says *who won* has to read `base_alive` and the lives,
+  or the engine has to start reporting a reason.
 - **`World::step` takes `&[Input]`, one per player, in slot order.** There is no
   single-input overload. `tc_step` in `wasm.rs` is the one place that still takes
   one input, because the browser only runs Single Player; it wraps it in a
   one-element slice. A match on the server calls `step` directly.
 - **A `World` has no mode.** `Setup` carries the four facts the engine needs
   (player count, waves, friendly fire, sides) and nothing else. Do not grow it
-  into the mode table — rounds, timers and match scoring are the match loop's, and
-  `server/src/rooms.rs` already owns the mode table.
-- **`npm run check-lobby` is the one check that needs something running.** Start
-  `cd server && cargo run` first. It fails with `could not reach …` when the
-  server is down, and that is the check working, not a bug in it.
+  into the mode table — rounds, timers and match scoring belong to the match loop
+  and the server, and `server/src/rooms.rs` already owns the mode table.
+  `matches::setup_for` is the one place the two are translated.
+- **`npm run check-lobby` and `npm run check-match` are the two checks that need
+  something running.** Start `cd server && cargo run` first. They fail with
+  `could not reach …` when the server is down, and that is the check working, not
+  a bug in it. `check-match` also needs `npm run wasm` (it reads the snapshot
+  offsets from the wasm) — `npm run check` builds it, and so does `prebuild`.
 - **The lobby over a quick tunnel needs two tunnels and a `?server=`.** A quick
   tunnel forwards one port, so the socket needs its own, and its address changes
   every run, so it cannot be baked into the build. `docs/sharing.md` has the
-  exact commands; a named tunnel avoids both, because
-  `deploy/cloudflared.yml` routes `/ws` on the one hostname.
+  exact commands; a named tunnel avoids both, because `/ws` is routed on the one
+  hostname — in `deploy/cloudflared.yml`, or as the first published-application
+  route in the dashboard.
+- **Route order is what makes one hostname work.** Whether in the file or the
+  dashboard list, `/ws` has to be matched before the hostname-wide rule, or the
+  socket request lands on Next.js and 404s. This is a silent failure: the page
+  loads perfectly and only the lobby says "could not reach the game server".
+- **There is no free tunnel hostname. The user has no domain (as of this
+  session).** The free tier covers the tunnel, not the name: a published
+  application's hostname is `<subdomain>.<domain-you-own>`, and theirs saved as
+  the bare label `tank_in_city` (visible in `journalctl -u cloudflared`, which is
+  how to read what Cloudflare actually pushed down). So the **quick tunnel is the
+  live path** and the named tunnel + its two routes sit idle until a domain
+  exists — do not treat the named tunnel as broken, and do not fill in
+  `deploy/cloudflared.yml` (their tunnel is token-based, `/etc/cloudflared/token`).
+- **A quick tunnel's link is not resolvable for ~30 seconds.** cloudflared prints
+  the address before the DNS record exists, and the first lookup gets `NXDOMAIN`,
+  which the local resolver then remembers — three separate attempts here died on
+  that, and one looked like a broken tunnel when it was only a poisoned cache.
+  `dig @1.1.1.1 <host>` answers while the local resolver does not. Verified after
+  the wait: the game page served **200** and the whole lobby protocol ran over
+  `wss://` on a real quick tunnel (`npm run check-lobby` → `lobby ok`).
+- **Playing locally needs no tunnel and no domain.** `http://localhost:3000/lobby`
+  is served over plain `http`, so `serverUrl()` returns `ws://localhost:8080/ws`:
+  two tabs, two guests, a real room. That is the fastest way to exercise the lobby
+  and, once the match page exists, a 1v1.
+
 - **`web/app/lobby/page.tsx` must not read `location` while rendering.** Next
   prerenders it, where `location` does not exist. That is why `serverUrl()` is
   called inside an effect. Reading it at the top of the component breaks the
@@ -301,22 +483,26 @@ discoveries, and do not re-ask them every turn.
 
 ## If you are picking up work now
 
-**Start here: `docs/milestone-3.md`, "Slice 4: the match loop — the next
-session".** It is a short brief — what the loop has to do, where it plugs in, the
-six decisions to settle with a recommendation for each, the one trap in it, and
-how to verify it without a browser. Everything it needs already exists.
+**Start here: `docs/milestone-3.md`, "Slice 4: the match loop".** It records what
+the loop does, where each of the brief's six decisions landed, the `GameOver` trap
+and how it was handled, and how it is checked without a browser. The loop is in;
+what it leaves is the next slice.
 
 In the order that pays best:
 
-1. **The match loop.** This is the last thing between the lobby and the
+1. **The match page.** This is the last thing between the lobby and the
    two-browser check in plan section 7, and the only thing left that makes the
-   game multiplayer. One `World` per room (`World::with_setup`), a 60 Hz tick, the
-   plan section 9 `input` and `snapshot` messages, and the `map` message on a
-   stage change. The socket, the rooms, the lobby screen and an engine that holds
-   six players are all in place and waiting for it.
-2. **Rounds and win conditions**, right behind the loop: best-of-3, a round ends
-   when a base falls or a side is out of lives, lives and scores reset between
-   rounds. `docs/deferred.md` under "Engine" and "Server" lists exactly what is
+   game watchable. `/game` runs the wasm engine locally; a match needs a page that
+   renders a *server* `snapshot` instead. `render.ts` already takes a plain
+   `Snapshot` object, so the renderer is reused — the work is one page, a socket
+   that holds open after `start_match`, and turning the flat `data` array back
+   into a `Snapshot` with the same offsets `readSnapshot` uses. **No browser
+   exists in this environment**, so this can only be type-checked and built here;
+   the user has to open it.
+2. **Rounds and win conditions**, right behind it: best-of-3, a round ends when a
+   base falls or a side is out of lives, lives and scores reset between rounds,
+   and a winner is named — which needs the `GameOver` reason the engine does not
+   report yet. `docs/deferred.md` under "Engine" and "Server" lists exactly what is
    missing, including the PvP scoring the engine does not do yet.
 3. **Two bases and PvP maps.** Team PvP needs a base per side and at least five
    maps to cycle (plan section 6). The stage format has one `#` today. FFA needs
@@ -329,6 +515,6 @@ In the order that pays best:
 **Sprites** (Milestone 5) would change the game's look more than anything else
 left on the list, but they are waiting on the user's art.
 
-**One thing to ask the user early**, because it blocks the last step of the match
-loop: the two-browser check. It needs two browsers, a tunnel and the user's
-hands. Ask before reaching it, not after.
+**One thing to ask the user early**, because it blocks the two-browser check: it
+needs two browsers, a tunnel and the user's hands. Ask before reaching it, not
+after.

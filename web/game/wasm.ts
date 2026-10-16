@@ -16,7 +16,7 @@ export type Core = {
 };
 
 /** Field order of the constants block in game-core/src/wasm.rs. */
-const CONSTANTS_FIELDS = [
+export const CONSTANTS_FIELDS = [
   "tile",
   "tankSize",
   "worldW",

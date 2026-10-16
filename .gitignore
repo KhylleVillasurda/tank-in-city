@@ -24,3 +24,6 @@ next-env.d.ts
 /assets/*.wav
 /assets/*.mp3
 /assets/*.ogg
+
+# Screenshots and traces written by the Playwright MCP server.
+/.playwright-mcp/

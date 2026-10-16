@@ -11,23 +11,40 @@ import { Sounds } from "../game/audio.ts";
 import { loadCore, readSnapshot } from "../game/wasm.ts";
 
 const played = [];
+/** Every gain ramp asked for, so muting can be asserted rather than guessed. */
+const ramps = [];
+/** Every source asked to stop, by the name of its buffer. */
+const stopped = [];
 
 class FakeSource {
   constructor() {
     this.buffer = null;
     this.loop = false;
     this.playbackRate = { value: 1 };
+    this.onended = null;
   }
   connect() {}
   start() {
     played.push({ name: this.buffer?.name ?? "?", rate: this.playbackRate.value });
   }
-  stop() {}
+  stop() {
+    stopped.push(this.buffer?.name ?? "?");
+  }
 }
 
 class FakeGain {
   constructor() {
-    this.gain = { value: 1, linearRampToValueAtTime() {} };
+    this.gain = {
+      value: 1,
+      linearRampToValueAtTime(v) {
+        this.value = v;
+        ramps.push(v);
+      },
+      setValueAtTime(v) {
+        this.value = v;
+      },
+      cancelScheduledValues() {},
+    };
   }
   connect() {}
 }
@@ -96,13 +113,17 @@ await new Promise((r) => setTimeout(r, 0)); // the decodes were fire-and-forget
 assert(sounds.buffers.size === 5, `all five files decoded, got ${sounds.buffers.size}`);
 
 // --- Playing now makes noise, and the right noise ---
+const music = "/audio/Battle_by_PerituneMaterial_8bitRPG.ogg";
+// The music starts with the gesture, not a frame later: whichever of the unlock
+// and the decode finishes last starts it, so a player who keys in the moment the
+// page opens does not wait for the next frame.
+assert(played.filter((p) => p.name === music).length === 1, "the music starts with the gesture");
+
 played.length = 0;
 core.tc_init(7);
 sounds.update(tick());
-const music = "/audio/Battle_by_PerituneMaterial_8bitRPG.ogg";
-assert(played.filter((p) => p.name === music).length === 1, "music starts once");
 sounds.update(tick());
-assert(played.filter((p) => p.name === music).length === 1, "and not again next frame");
+assert(played.filter((p) => p.name === music).length === 0, "and not again per frame");
 
 played.length = 0;
 for (let i = 0; i < 400; i++) {
@@ -202,15 +223,49 @@ if (lostBase) {
 // --- Stage clear cannot be reached from here: it needs 20 kills. The trigger
 // is exercised with a synthetic frame instead. ---
 played.length = 0;
+ramps.length = 0;
 sounds.update({ ...tick(), state: consts.statePlaying });
 sounds.update({ ...tick(), state: consts.stateStageClear });
 assert(
   played.some((p) => p.name === "/audio/level_cleared.ogg"),
   "stage clear plays the jingle",
 );
+assert(ramps.includes(0), "the jingle plays alone: the music is muted under it");
 const jingles = played.length;
 sounds.update({ ...tick(), state: consts.stateStageClear });
 assert(played.length === jingles, "the jingle does not retrigger while the screen is up");
+assert(ramps.filter((v) => v === 0).length === 1, "and the music is not muted again per frame");
+assert(
+  !stopped.includes("/audio/level_cleared.ogg"),
+  "and it is left to play out while the screen is up",
+);
+
+// Carrying on brings the run's music back, at the same place in the track, and
+// cuts the jingle off rather than letting it play over the next stage.
+ramps.length = 0;
+sounds.update({ ...tick(), state: consts.statePlaying });
+assert(ramps.some((v) => v > 0), "carrying on unmutes the music");
+assert(
+  stopped.includes("/audio/level_cleared.ogg"),
+  "carrying on cuts the jingle before it ends",
+);
+
+// --- The player's own switch, which outranks the jingle ---
+ramps.length = 0;
+sounds.setMusicOff(true);
+assert(ramps.includes(0), "the music switch silences the loop");
+
+ramps.length = 0;
+sounds.update({ ...tick(), state: consts.stateStageClear });
+sounds.update({ ...tick(), state: consts.statePlaying });
+assert(
+  !ramps.some((v) => v > 0),
+  "a stage clear ending does not bring the music back while the switch is off",
+);
+
+ramps.length = 0;
+sounds.setMusicOff(false);
+assert(ramps.some((v) => v > 0), "turning the switch back on restores the music");
 
 sounds.stop();
 console.log(`audio ok: ${played.length} sounds in the last stretch, all five files decoded`);

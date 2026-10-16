@@ -63,6 +63,11 @@ export class Game {
     this.keyboard.clicked();
   }
 
+  /** The music switch on the game page. */
+  setMusicOff(off: boolean) {
+    this.sounds.setMusicOff(off);
+  }
+
   private frame = (now: number) => {
     if (this.keyboard.takePress("p") || this.keyboard.takePress("escape")) {
       this.paused = !this.paused;
