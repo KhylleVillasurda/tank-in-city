@@ -301,6 +301,11 @@ discoveries, and do not re-ask them every turn.
 
 ## If you are picking up work now
 
+**Start here: `docs/milestone-3.md`, "Slice 4: the match loop — the next
+session".** It is a short brief — what the loop has to do, where it plugs in, the
+six decisions to settle with a recommendation for each, the one trap in it, and
+how to verify it without a browser. Everything it needs already exists.
+
 In the order that pays best:
 
 1. **The match loop.** This is the last thing between the lobby and the
@@ -323,3 +328,7 @@ In the order that pays best:
 
 **Sprites** (Milestone 5) would change the game's look more than anything else
 left on the list, but they are waiting on the user's art.
+
+**One thing to ask the user early**, because it blocks the last step of the match
+loop: the two-browser check. It needs two browsers, a tunnel and the user's
+hands. Ask before reaching it, not after.

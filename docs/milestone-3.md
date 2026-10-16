@@ -352,3 +352,60 @@ the same 2700 points over the same 6000 ticks, from the same seed.
 ## Deliberately not done yet
 
 In `docs/deferred.md` under "Server", with the rest of the live list.
+
+## Slice 4: the match loop — the next session
+
+Not started. This is the brief, so the design does not have to be re-derived.
+
+**What it has to do.** One `World` per room, ticked at 60 Hz on the server,
+taking each player's input and pushing the resulting state back out.
+
+**What already exists and where it plugs in:**
+
+| Piece | Where |
+|---|---|
+| A room that reached `Playing`, and its players with their sides | `server/src/rooms.rs` |
+| The socket, the message types, the hub, the rate limiter | `server/src/ws.rs` |
+| An engine that takes N inputs and holds N players | `game-core`, `World::with_setup` + `step(&[Input])` |
+| The flat `[i32; 191]` state buffer | `World::write_snapshot` |
+| A renderer that draws any `Snapshot` object | `web/game/render.ts` |
+
+**Decisions to settle first, with a recommendation each:**
+
+1. **Where the tick lives.** One `tokio::spawn` task per room, started by
+   `start_match`, using `tokio::time::interval`. A single loop over all rooms is
+   the alternative; one task per room is simpler and a few rooms is nothing.
+2. **How often a snapshot goes out.** Not 60 Hz — 191 ints per player per tick is
+   too much to send. Start at **20 Hz** and let the client interpolate, which is
+   what plan section 5 asks for anyway.
+3. **Snapshot encoding.** Start with `serde_json` on the flat int array. Measure
+   before reaching for a binary frame; a lobby-scale game may never need one.
+4. **Input shape.** `input { move, fire, tick }` per plan section 9. The server
+   keeps the latest input per player and consumes it on the tick, so a dropped or
+   late message is harmless. The existing 120/s cap is comfortably above 60/s.
+5. **Which `Setup` a mode maps to.** `waves` is true only for `Coop`, `teams`
+   comes from each `Player`'s own `team`, `friendly_fire` from the room, and the
+   player count from the roster. Single Player stays exactly as it is.
+6. **The client's second path.** `/game` runs the wasm engine locally. A match
+   needs a page that renders *server* snapshots instead — and `render.ts` already
+   takes a plain `Snapshot` object, so the renderer is reused, not rewritten.
+   `Snapshot` lives in `web/game/wasm.ts`; the wire shape should match it.
+
+**What ends a match, and the trap in it.** `World.state == GameOver` means the
+run is over, but it fires for *any* reason: the base falling, every player out of
+lives, and (in a no-waves match) nothing else. A round outcome needs to know
+*which* happened, and the engine does not say. Either read `base_alive` and the
+lives to tell them apart, or have the engine report a reason. Decide this before
+writing the loop, not after.
+
+**How to verify it without a browser.** Extend `web/scripts/check-lobby.mjs`
+into a `check-match.mjs`: two WebSocket clients, a real room, a real match, assert
+that snapshots arrive and that a player moves when it sends `input`. That is the
+local stand-in for plan section 7's two-browser check, and it is how the socket
+work was proven in slice 2. **Do not call the match done on the strength of unit
+tests alone** — the two-browser check needs the user.
+
+**Then, in order:** rounds and win conditions (best-of-3, lives and scores reset
+between rounds, the round count carries over), then PvP scoring (500 a kill, 1000
+for a base, -250 for a team kill), then two bases and PvP maps, then spectating.
+`docs/deferred.md` lists each one with what is missing.
