@@ -1,0 +1,26 @@
+# Build output
+/target/
+**/target/
+
+# Next.js
+/node_modules/
+**/node_modules/
+/.next/
+**/.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Rust build helper the wasm script copies in
+/web/public/game_core.wasm
+
+# graphify
+/graphify-out/
+**/graphify-out/
+
+# Raw downloaded audio. Two of the three sources forbid redistributing the
+# unmodified file, and a repository is redistribution, so only the converted
+# files in web/public/audio/ are committed. The raw files stay here as the
+# source for re-converting a sound. See CREDITS.md.
+/assets/*.wav
+/assets/*.mp3
+/assets/*.ogg

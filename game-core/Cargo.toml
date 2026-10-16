@@ -1,0 +1,13 @@
+[package]
+name = "game-core"
+version = "0.1.0"
+edition = "2021"
+description = "Tank In City game rules. Compiles to WASM for the browser and to native for the server."
+
+[lib]
+# cdylib: the WASM module the browser loads. rlib: native use (tests, later the server).
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = "s"
+lto = true

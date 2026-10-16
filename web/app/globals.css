@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme {
+  /* The 8-bit face. app/layout.tsx loads the file and sets --font-pixel-face,
+     so this stays a plain CSS variable and offline builds keep working. */
+  --font-pixel: var(--font-pixel-face), ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: #0b0b0f;
+  color: #e8e8ea;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+canvas {
+  /* Keep the chunky pixels chunky when the canvas is scaled by the browser. */
+  image-rendering: pixelated;
+}
+
+/* --- 8-bit dressing ------------------------------------------------------ */
+
+/*
+ * Scanlines over the whole page, from one fixed overlay rather than a border on
+ * every element. It never eats a click, and it is faint enough to read a HUD
+ * through.
+ */
+.crt::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.03) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+/*
+ * Everything below snaps between states instead of easing, because smooth
+ * motion is the one thing an 8-bit machine could not do.
+ */
+@keyframes tc-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes tc-boot {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.blink {
+  animation: tc-blink 1.06s steps(1, end) infinite;
+}
+
+.boot {
+  animation: tc-boot 0.42s steps(4, end) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blink,
+  .boot {
+    animation: none;
+  }
+}
