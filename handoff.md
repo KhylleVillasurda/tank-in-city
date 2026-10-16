@@ -172,8 +172,8 @@ Current state: 37 tests pass in `game-core` and 37 in `server`, no compiler
 warnings and clippy is silent in both, `npm run check` reports
 `wasm ABI ok: score=2700 lives=1 stage=1 enemiesLeft=4 idleGameOver=30s`,
 `npm run check-audio` reports `audio ok`, `npm run check-lobby` reports
-`lobby ok`, `tsc` and `build` are clean, and the graph was 847 nodes / 1351 edges
-/ 56 communities at the last update.
+`lobby ok`, `tsc` and `build` are clean, and the graph was 848 nodes / 1354 edges
+/ 44 communities at the last update.
 
 `score=2700 lives=1` in that line is worth knowing: it is the *same* number the
 check printed before the several-players change, from the same seed over the same
