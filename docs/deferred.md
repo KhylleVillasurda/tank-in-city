@@ -84,6 +84,12 @@ Milestone 3 slice 1 (the lobby) is in. These are what it left out on purpose.
   the match loop follows it. This is why slice 1 has no `World` in it.
 - **The socket.** No HTTP, no WebSocket, no Axum yet. The registry is a plain
   library, so the protocol layer plugs into it without rework.
+- **Where the client finds the socket.** A quick tunnel hands out a new address
+  every run, so it cannot be hard-coded; and the game page is `https`, so the
+  socket has to arrive as `wss://` through a tunnel of its own rather than a plain
+  `ws://` (the browser blocks that as mixed content). `docs/sharing.md`, "When
+  multiplayer arrives", lists the options. A WebSocket was tested through a quick
+  tunnel and it works, so this is a wiring decision, not a blocker.
 - **Session tokens and reconnect.** Plan section 5 issues a token on join and
   allows a 30-second reconnect. The token is only useful with reconnect, and
   reconnect needs the match loop, so both wait. `Player` has no identity across

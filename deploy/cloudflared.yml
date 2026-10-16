@@ -1,0 +1,49 @@
+# Cloudflare named tunnel for Tank In City.
+#
+# Use this when you want a stable hostname instead of the random link a quick
+# tunnel hands out. It needs a Cloudflare account and a domain on that account,
+# so for a one-off session with friends prefer `web/scripts/share.sh`, which
+# needs neither. See docs/sharing.md.
+#
+# Set it up once:
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create tank-in-city
+#   cloudflared tunnel route dns tank-in-city tank.example.com
+#   cloudflared tunnel route dns tank-in-city tank-ws.example.com
+#
+# Then run it, from the repository root:
+#
+#   cloudflared tunnel --config deploy/cloudflared.yml run
+#
+# Fill in the tunnel UUID and the paths and hostnames below. `cloudflared tunnel
+# list` prints the UUID; the credentials file is written next to it when you
+# create the tunnel.
+
+tunnel: REPLACE-WITH-TUNNEL-UUID
+credentials-file: /home/REPLACE-WITH-YOUR-USER/.cloudflared/REPLACE-WITH-TUNNEL-UUID.json
+
+# cloudflared keeps its own logs down here. It does not log request bodies, so
+# it will not log a room password, but it does log every request path.
+loglevel: info
+
+ingress:
+  # The game. This is the hostname to send to friends.
+  - hostname: tank.example.com
+    service: http://localhost:3000
+
+  # The game server, once it speaks WebSocket. Nothing is listening on 8080 yet
+  # — this is Milestone 3 slice 2, so leave the rule here and it starts working
+  # the day that lands.
+  #
+  # It needs its own hostname rather than a path on the one above, because a
+  # WebSocket upgrade wants its own route and because the game page is https:
+  # a plain ws:// connection from an https page is blocked as mixed content, so
+  # the socket has to arrive as wss:// through a tunnel too. Verified working
+  # through a quick tunnel, see docs/sharing.md.
+  - hostname: tank-ws.example.com
+    service: http://localhost:8080
+
+  # cloudflared requires a catch-all last. Without it, a hostname that is not
+  # listed above would fall through to the first rule.
+  - service: http_status:404

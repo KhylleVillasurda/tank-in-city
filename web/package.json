@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "check": "node scripts/check-wasm.mjs",
-    "check-audio": "node --no-warnings scripts/check-audio.mjs"
+    "check-audio": "node --no-warnings scripts/check-audio.mjs",
+    "share": "bash scripts/share.sh"
   },
   "dependencies": {
     "next": "^16.4.1",
