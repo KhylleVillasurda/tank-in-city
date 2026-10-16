@@ -1,8 +1,8 @@
 # Handoff
 
 Read this first. It is the state of the project at the end of the session that
-added Cloudflare tunnel sharing, written for whoever picks it up next — human or
-AI.
+put the multiplayer lobby on a socket, written for whoever picks it up next —
+human or AI.
 
 Everything here was checked, not remembered. Where a fact lives in another file,
 this points at it instead of copying it, so the two cannot drift apart.
@@ -18,14 +18,16 @@ rules, milestones, repo layout. Read it before proposing anything.
 | 2 — Single Player | done, play-tested, closed |
 | 5 — sound | **pulled forward and working**, six of twelve files still missing |
 | 5 — sprites and the credits page | not started |
-| 3 — rooms and netplay | **slice 1 done** (the lobby); the match loop and the socket are next |
+| 3 — rooms and netplay | **slices 1 and 2 done** (the lobby, and the socket under it); the match loop is next |
 | 4 — accounts and leaderboards | not started |
 
 One mode exists (Single Player). The engine holds those rules directly rather
 than behind a `Mode` enum; the seam is `World::new` plus `rules.rs`.
 
-`server/` exists now. It is a second Rust crate beside `game-core`, with **no
-Cargo workspace** — a path dependency, so the wasm build script is untouched.
+`server/` exists now and listens. It is a second Rust crate beside `game-core`,
+with **no Cargo workspace** — a path dependency, so the wasm build script is
+untouched. `cd server && cargo run` serves the lobby socket on `/ws` and a
+`/health` check on `127.0.0.1:8080`. Nothing runs a match yet.
 
 ## Read these, in this order
 
@@ -42,10 +44,11 @@ Cargo workspace** — a path dependency, so the wasm build script is untouched.
    function.
 8. `docs/sprites.md` — the drawing sizes for the artwork. Read before drawing or
    placing any sprite.
-9. `docs/milestone-3.md` — the server and the lobby rules, plus what slice 1 left
-   out.
+9. `docs/milestone-3.md` — the server, the lobby rules and the socket, plus what
+   slices 1 and 2 left out.
 10. `docs/sharing.md` — how to put the game on a public link with cloudflared, so
-    friends can open it without a deployment.
+    friends can open it without a deployment. Read it before testing with
+    anyone: it says what friends can and cannot do today.
 
 ## What the last session changed
 
@@ -81,21 +84,37 @@ Do not redo these; build on them.
   lints were pre-existing and are also gone: a redundant `as u8` cast in
   `bullet.rs`, an unnecessary `let` in `ai.rs`, and a complex type in
   `tests/engine.rs`.
-- **`server/` is new: the room registry.** A second Rust crate (`game-core` by
-  path, plus `tracing`). Codes, the public room list, teams, ready states, host
-  transfer, and the start check — every rule in plan section 3 that needs no
-  socket. 24 tests, one per rule. `docs/milestone-3.md` has the decisions and
-  what slice 1 left out. **It does not run a match yet:** the engine is still
+- **`server/` is new: the room registry, and now the socket on top of it.** A
+  second Rust crate (`game-core` by path, plus `axum`, `tokio`, `serde`,
+  `tracing`). Codes, the public room list, teams, ready states, host transfer,
+  and the start check — every rule in plan section 3 that needs no socket. 25
+  tests, one per rule. `docs/milestone-3.md` has the decisions and what each
+  slice left out. **It does not run a match yet:** the engine is still
   single-player, so the match loop needs the engine to hold several players
   first.
 - **Sharing over a Cloudflare tunnel.** `web/scripts/share.sh` (also `npm run
   share`) starts a quick tunnel to the web app and refuses to start if nothing
-  answers on the port. `deploy/cloudflared.yml` is the named-tunnel config, with
-  an ingress rule for the game server ready for slice 2. `docs/sharing.md`
-  documents both. **Verified end to end:** the public link served the page, the
-  wasm, the audio and the font, and **a WebSocket round-tripped through a quick
-  tunnel** — which is the transport multiplayer will need, and it needs no
-  account and no domain.
+  answers on the port. `deploy/cloudflared.yml` is the named-tunnel config: it
+  sends `/ws` to the game server and everything else to the web app, **on one
+  hostname**, so the lobby needs no configuration and cannot hit mixed content.
+  `docs/sharing.md` documents both.
+- **The lobby is on a socket.** `server/src/ws.rs` is new: Axum on `/ws` plus a
+  `/health`, the plan section 9 lobby messages, and a `room_state` pushed to the
+  room after every change. `server/src/main.rs` now binds `127.0.0.1:8080`
+  instead of logging one line and exiting. Two rules from plan section 10 live
+  there because they are per-connection: a message size cap and a rate cap.
+- **`Registry::start` now takes the requester.** Slice 1 let anyone start
+  anyone's match. Section 3 says the host starts it, so that rule moved into the
+  registry, where the other room rules and their tests are.
+- **The lobby screen exists.** `web/app/lobby/page.tsx` and `web/game/lobby.ts`,
+  reached from the menu. It decides nothing: it sends messages and draws the last
+  `room_state` it was given.
+- **`web/scripts/check-lobby.mjs`** (also `npm run check-lobby`) drives the whole
+  protocol against a running server, which is how the socket gets checked without
+  a browser. `LOBBY_URL` points it at a tunnel.
+- **Verified over a real tunnel:** the whole lobby — create, join, ready, start,
+  leave — ran against a Cloudflare quick tunnel over `wss://`. That is the
+  transport multiplayer will use, proven before the match loop exists.
 
 ## How to verify
 
@@ -104,12 +123,19 @@ All of these must pass before a change is called done.
 ```sh
 cd game-core && cargo test          # 28 tests: 23 engine, 1 sizes, 4 stage data
 cd game-core && cargo clippy --all-targets   # must be silent
-cd server && cargo test             # 24 tests: the room rules
+cd server && cargo test             # 37 tests: 25 room rules, 5 socket units, 7 socket
 cd server && cargo clippy --all-targets      # must be silent
 cd web && npm run check             # headless wasm ABI and rules
 cd web && npm run check-audio       # headless sound triggers
 cd web && npx tsc --noEmit          # type check
 cd web && npm run build             # production build
+```
+
+Then, with the server up in another terminal (`cd server && cargo run`), because
+the socket cannot be checked any other way:
+
+```sh
+cd web && npm run check-lobby       # drives the whole lobby protocol
 ```
 
 Then, because code changed:
@@ -118,11 +144,12 @@ Then, because code changed:
 graphify update .
 ```
 
-Current state: 28 tests pass in `game-core` and 24 in `server`, no compiler
+Current state: 28 tests pass in `game-core` and 37 in `server`, no compiler
 warnings and clippy is silent in both, `npm run check` reports
 `wasm ABI ok: score=2700 lives=1 stage=1 enemiesLeft=4 idleGameOver=30s`,
-`npm run check-audio` reports `audio ok`, `tsc` and `build` are clean, and the
-graph was 683 nodes / 1013 edges / 44 communities at the last update.
+`npm run check-audio` reports `audio ok`, `npm run check-lobby` reports
+`lobby ok`, `tsc` and `build` are clean, and the graph was 808 nodes / 1277 edges
+/ 49 communities at the last update.
 
 ## Traps that will cost you an hour
 
@@ -176,6 +203,18 @@ graph was 683 nodes / 1013 edges / 44 communities at the last update.
 - **`server/` does not run a match.** The engine is single-player, so a room
   reaches `Playing` and stops. Do not wire a `World` into a room before the
   engine can hold several players.
+- **`npm run check-lobby` is the one check that needs something running.** Start
+  `cd server && cargo run` first. It fails with `could not reach …` when the
+  server is down, and that is the check working, not a bug in it.
+- **The lobby over a quick tunnel needs two tunnels and a `?server=`.** A quick
+  tunnel forwards one port, so the socket needs its own, and its address changes
+  every run, so it cannot be baked into the build. `docs/sharing.md` has the
+  exact commands; a named tunnel avoids both, because
+  `deploy/cloudflared.yml` routes `/ws` on the one hostname.
+- **`web/app/lobby/page.tsx` must not read `location` while rendering.** Next
+  prerenders it, where `location` does not exist. That is why `serverUrl()` is
+  called inside an effect. Reading it at the top of the component breaks the
+  build, not just the page.
 
 ## Constraints to keep
 
@@ -219,17 +258,14 @@ discoveries, and do not re-ask them every turn.
 
 In the order that pays best:
 
-1. **Milestone 3 slice 2: the WebSocket layer and the lobby protocol.** Axum
-   plus `server/src/ws/`, speaking the messages in plan section 9 that the
-   registry already answers: `create_room`, `join_room`, `list_rooms`,
-   `set_ready`, `leave_room`, `room_state`, `room_list`, `error`. **No engine
-   change**, so it cannot disturb the movement path — and it is the first slice
-   the user could actually see in a browser.
-2. **Milestone 3 slice 3: the engine holds several players.** `World` has one
+1. **Milestone 3 slice 3: the engine holds several players.** `World` has one
    `player` tank and an `enemies` array today. PvP needs N player tanks and no
    AI (team modes never have AI), which is what the match loop waits on. This is
    the delicate slice: it changes the snapshot layout, so all three constant
    lists and `web/game/wasm.ts` move with it.
+2. **Then the match loop**, which is the last thing between the lobby and the
+   two-browser check in plan section 7. The socket, the rooms and the lobby
+   screen are all in place and waiting for it.
 3. **The six missing sounds.** `docs/deferred.md` lists each one with the event
    that triggers it. Adding one is a file plus a line in `web/game/audio.ts`.
 4. **The engine loop is still undecided** — `tank_moving_by_kenny.ogg` is wired,

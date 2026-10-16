@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 
 use game_core::rng::Rng;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 /// Room codes are 5 characters (plan section 3, "Room rules").
@@ -26,11 +27,17 @@ pub const MAX_PLAYERS: usize = 6;
 pub const MAX_NAME_LEN: usize = 16;
 
 /// A match mode (plan section 3, "Room modes").
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+///
+/// The serde names are the wire names, and they are the names the lobby shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub enum Mode {
+    #[serde(rename = "1v1")]
     OneVOne,
+    #[serde(rename = "2v2")]
     TwoVTwo,
+    #[serde(rename = "3v3")]
     ThreeVThree,
     FreeForAll,
     Coop,
@@ -75,7 +82,8 @@ impl Mode {
 }
 
 /// Which side a player is on.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub enum Team {
     A,
@@ -85,14 +93,15 @@ pub enum Team {
 }
 
 /// Where a room is in its life. `Playing` is what blocks new joins.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Status {
     Waiting,
     Playing,
 }
 
 /// One player in a lobby.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Player {
     pub name: String,
     pub team: Team,
@@ -205,6 +214,9 @@ pub enum JoinError {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StartError {
     NoSuchRoom,
+    /// Someone other than the host asked to start (plan section 3, "The host
+    /// starts the match").
+    NotHost,
     /// A side has fewer players than the mode needs.
     SideTooSmall,
     /// A non-team mode has fewer than two players.
@@ -213,7 +225,7 @@ pub enum StartError {
 }
 
 /// One row of the public room list (plan section 3, "Room list").
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 pub struct RoomSummary {
     pub code: String,
     pub host: String,
@@ -397,22 +409,28 @@ impl Registry {
         Ok(())
     }
 
-    /// Start the match if the lobby allows it.
-    pub fn start(&mut self, code: &str) -> Result<(), StartError> {
-        match self.try_start(code) {
+    /// Start the match if the lobby allows it and the host asked.
+    ///
+    /// `by` is the requester: the plan says the host starts the match, so anyone
+    /// else is refused rather than silently starting someone else's room.
+    pub fn start(&mut self, code: &str, by: &str) -> Result<(), StartError> {
+        match self.try_start(code, by) {
             Ok(()) => {
-                info!(code, "match started");
+                info!(code, host = by, "match started");
                 Ok(())
             }
             Err(e) => {
-                warn!(code, reason = ?e, "start refused");
+                warn!(code, player = by, reason = ?e, "start refused");
                 Err(e)
             }
         }
     }
 
-    fn try_start(&mut self, code: &str) -> Result<(), StartError> {
+    fn try_start(&mut self, code: &str, by: &str) -> Result<(), StartError> {
         let room = self.rooms.get_mut(code).ok_or(StartError::NoSuchRoom)?;
+        if room.host() != by {
+            return Err(StartError::NotHost);
+        }
         room.can_start()?;
         room.status = Status::Playing;
         Ok(())

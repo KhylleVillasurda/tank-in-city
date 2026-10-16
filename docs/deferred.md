@@ -76,20 +76,34 @@ three fifths of the list are done by reuse rather than by new files.
 
 ## Server
 
-Milestone 3 slice 1 (the lobby) is in. These are what it left out on purpose.
+Milestone 3 slices 1 and 2 (the lobby, and the socket under it) are in. These are
+what they left out on purpose.
 
 - **The match loop.** A room reaches `Playing` and stops. The engine is still
   single-player — one player tank plus AI — so a room cannot run a match until
   `game-core` holds several players. That engine change is the next slice, and
-  the match loop follows it. This is why slice 1 has no `World` in it.
-- **The socket.** No HTTP, no WebSocket, no Axum yet. The registry is a plain
-  library, so the protocol layer plugs into it without rework.
+  the match loop follows it.
+- **Every message that needs a running match.** `input`, `reconnect` and
+  `request_swap` are refused with an error rather than ignored. `map`,
+  `snapshot`, `map_event`, `player_disconnected`, `player_reconnected`,
+  `player_eliminated` and `match_over` are not sent at all.
+- **Kicking.** Plan section 10 gives the host a kick before the match starts. It
+  is not in the protocol and not built.
+- **A name filter.** Plan section 10 asks for "a basic filter for obvious slurs"
+  on names. Today a name is only checked for being non-empty and 16 characters or
+  fewer, so anyone can put anything in a lobby. Needs a word list, and a decision
+  about which languages.
 - **Where the client finds the socket.** A quick tunnel hands out a new address
   every run, so it cannot be hard-coded; and the game page is `https`, so the
   socket has to arrive as `wss://` through a tunnel of its own rather than a plain
-  `ws://` (the browser blocks that as mixed content). `docs/sharing.md`, "When
-  multiplayer arrives", lists the options. A WebSocket was tested through a quick
-  tunnel and it works, so this is a wiring decision, not a blocker.
+  `ws://` (the browser blocks that as mixed content). Today that is the
+  `?server=` parameter on the lobby URL, in `docs/sharing.md`. A named tunnel puts
+  both on one hostname and needs no parameter at all.
+- **The room code is quoted in some log lines and bare in others.** `rooms.rs`
+  writes `code=%code` when it creates a room and a bare `code` field everywhere
+  else, and the two render differently — `code=VDS97` against `code="VDS97"` — so
+  grepping one code does not give every line for it. Plan section 14 asks for
+  exactly that. Make them all `%code`.
 - **Session tokens and reconnect.** Plan section 5 issues a token on join and
   allows a 30-second reconnect. The token is only useful with reconnect, and
   reconnect needs the match loop, so both wait. `Player` has no identity across
@@ -112,7 +126,7 @@ Scheduled in `plan.md`, listed here only so this file is the one place to look.
 
 | Skipped | Arrives in |
 |---|---|
-| Rooms, hosting, joining, the match loop, client prediction, server authority | Milestone 3 (the lobby is done; see "Server" above) |
+| Rooms, hosting, joining, the match loop, client prediction, server authority | Milestone 3 (the lobby and its socket are done; see "Server" above) |
 | Accounts, email verification, profiles, friends, chat, spectating | Milestone 4 |
 | Local and online leaderboards, persistent scores | Milestone 4 |
 | Sprites, the credits page | Milestone 5 |

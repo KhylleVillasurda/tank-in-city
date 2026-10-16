@@ -11,6 +11,7 @@
     "start": "next start",
     "check": "node scripts/check-wasm.mjs",
     "check-audio": "node --no-warnings scripts/check-audio.mjs",
+    "check-lobby": "node scripts/check-lobby.mjs",
     "share": "bash scripts/share.sh"
   },
   "dependencies": {

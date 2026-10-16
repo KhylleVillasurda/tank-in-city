@@ -6,8 +6,8 @@ import { useEffect, useState } from "react";
 import { guestName } from "@/game/guest";
 
 /**
- * Main menu (plan section 3). Host and Join need rooms (Milestone 3) and
- * Profile needs accounts (Milestone 4).
+ * Main menu (plan section 3). Host and Join are one lobby screen, since that
+ * screen does both. Profile needs accounts (Milestone 4).
  */
 export default function Menu() {
   const [name, setName] = useState("");
@@ -33,8 +33,12 @@ export default function Menu() {
         >
           Single Player
         </Link>
-        <Disabled label="Host Room" note="Milestone 3" />
-        <Disabled label="Join Room" note="Milestone 3" />
+        <Link
+          className="border border-zinc-700 px-4 py-3 text-center font-pixel text-xs text-zinc-300 hover:border-emerald-600 hover:text-emerald-400"
+          href="/lobby"
+        >
+          Host or Join Room
+        </Link>
         <Disabled label="Profile" note="Milestone 4" />
       </div>
 

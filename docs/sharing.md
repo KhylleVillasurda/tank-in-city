@@ -2,9 +2,9 @@
 
 How to put Tank In City on a public link so other people can open it, without
 deploying anything. It uses a **Cloudflare Tunnel** (`cloudflared`), which
-forwards a public `https://` address to a server running on your machine.
+forwards a public `https://` address to something running on your machine.
 
-Two ways, in `deploy/cloudflared.yml` and `web/scripts/share.sh`:
+Two ways:
 
 | | Needs | Link | Use it for |
 |---|---|---|---|
@@ -15,16 +15,20 @@ Start with the quick tunnel. It is one command and it needs no account.
 
 ## What friends can do right now
 
-**Single Player. That is all.** Read this before inviting anyone.
+**Single Player, and the lobby. Not a match.**
 
-Multiplayer is not built yet. The engine is single player, the server has no
-socket, and the lobby has no client. So two friends opening the link will each
-get their own Single Player run and will not see each other.
+- **Single Player** works fully. That is one link and nothing else.
+- **The lobby** works: friends can create a room, join by code, appear on a side,
+  mark ready, and the host can start. You will see each other.
+- **A match does not.** Pressing start moves the room to "playing" and stops
+  there: the match loop is not built. The engine is still single player, so it
+  cannot hold two tanks yet.
 
-That is Milestone 3 slices 2 and 3. The tunnel below is the transport they will
-use, so setting it up now is not wasted — but do not promise a friend a match.
+So invite someone to prove the socket works, not to play a game against you.
 
 ## Quick tunnel
+
+### Single Player only
 
 Two terminals.
 
@@ -41,112 +45,165 @@ cd web
 npm run share          # or: bash scripts/share.sh
 ```
 
-`cloudflared` prints a box with a link ending in `trycloudflare.com`. That is
-the link to send. It stays alive until you press Ctrl-C.
+`cloudflared` prints a box with a link ending in `trycloudflare.com`. That is the
+link to send. It stays alive until you press Ctrl-C.
 
-`npm run dev` works too, and is fine for a quick look, but it is slower and the
-dev server recompiles as you type. `npm start` is the production build and is
-what you want when someone else is playing.
+### To include the lobby
 
-`PORT=4000 npm run share` points the tunnel at a different port, if your server
-is not on 3000.
+Four terminals. The socket needs its own tunnel, because a quick tunnel can only
+forward to one port.
+
+```sh
+# Terminal 1: the game server (listens on 127.0.0.1:8080)
+cd server
+cargo run
+
+# Terminal 2: the game itself
+cd web
+npm start
+
+# Terminal 3: a tunnel to the game
+cd web
+npm run share
+
+# Terminal 4: a tunnel to the socket
+cloudflared tunnel --url http://localhost:8080
+```
+
+Now take the two links cloudflared printed and join them:
+
+```
+<terminal 3 link>/lobby?server=wss://<terminal 4 link>/ws
+```
+
+For example, if terminal 3 gave you `https://quiet-hill-abc.trycloudflare.com`
+and terminal 4 gave you `https://fast-river-xyz.trycloudflare.com`, the link to
+send is:
+
+```
+https://quiet-hill-abc.trycloudflare.com/lobby?server=wss://fast-river-xyz.trycloudflare.com/ws
+```
+
+That is the whole trick. `?server=` exists because the address changes every run,
+so it cannot be baked into the build; see "When the match loop lands" below.
+
+The lobby page shows the address it is using under the title, so a wrong one is
+visible rather than mysterious.
+
+## Is the socket working?
+
+Before inviting anyone, check the server on its own:
+
+```sh
+cd web && npm run check-lobby
+```
+
+It connects twice, creates a room, joins it, readies both players, starts the
+match, and leaves. Five seconds, and it tells you whether the problem is the
+server or the browser.
+
+Point it at a tunnel with `LOBBY_URL`:
+
+```sh
+LOBBY_URL=wss://fast-river-xyz.trycloudflare.com/ws npm run check-lobby
+```
+
+`curl http://localhost:8080/health` answering `ok` means the server is up.
 
 ## What was verified
 
-This was tested end to end, not assumed. A production build behind a quick
-tunnel, fetched from the public link:
+Checked end to end against real tunnels, not assumed:
 
-| Request | Result |
+| What | Result |
 |---|---|
-| `/`, `/menu`, `/game` | 200 |
-| `/game_core.wasm` | 200, 41,360 bytes |
-| `/audio/shoot.ogg` | 200, 5,408 bytes |
-| the pixel font | 200, 12,512 bytes |
-| `next dev` behind the same tunnel | all three routes 200 |
+| The public link served the page, the wasm, the audio and the font | all 200 |
+| `next dev` behind the same tunnel | every route 200 |
+| A WebSocket round-tripped through a quick tunnel | reply received |
+| **The whole lobby protocol over a quick tunnel, `wss://`** | create, join, ready, start, leave |
+| The game server's `/health` and `npm run check-lobby` | 200, and `lobby ok` |
 
-**A WebSocket survives the tunnel.** That was tested separately with a throwaway
-echo server on port 8080 behind a second quick tunnel: the message went out and
-the reply came back. This matters because it is the transport multiplayer will
-use, and it means multiplayer over a quick tunnel needs no account and no domain.
-
-**Not verified:** anything needing a browser. Nobody has clicked the link from a
-real browser, and no audio has been heard. Only the HTTP and WebSocket traffic
-was checked.
+**Not verified:** anything needing a browser. Nobody has opened `/lobby` in one,
+so no button has been clicked and no audio has been heard. Only the HTTP and
+WebSocket traffic was checked.
 
 ## Security, before you leave it running
 
-A quick tunnel puts your machine on the public internet at a guessable-looking
-but unlisted address. Anyone with the link gets through.
+A quick tunnel puts your machine on the public internet at an unlisted address.
+Anyone with the link gets through.
 
 - **Use `npm start`, not `npm run dev`.** The dev server serves source maps and
-  is not built for strangers. The production server is.
-- **Stop it when you are done.** Ctrl-C closes the tunnel. It does not keep
+  is not built for strangers.
+- **Stop it when you are done.** Ctrl-C closes a tunnel. It does not keep
   running on its own.
 - **Do not leave it up overnight.** It is a testing tool, not hosting.
-- **The link is the only secret.** There is no password on it. Share it where
-  you would share anything else public.
-- The tunnel exposes **only the port you point it at**. Nothing else on your
-  machine is reachable.
+- **The link is the only secret.** There is no password on it.
+- **The game server binds `127.0.0.1` only**, so the tunnel is the only way in
+  and nothing else on your machine is reachable.
+- **A room password is not security.** It is a lobby gate and it travels in the
+  clear. See `docs/deferred.md`.
 
 ## Named tunnel, for a stable link
 
-Do this when the random link each run gets annoying, or when you want both the
-game and the game server on one tunnel. It needs a Cloudflare account and a
-domain added to that account. Everything is in `deploy/cloudflared.yml`.
+Do this when the random link each run gets annoying. It needs a Cloudflare
+account and a domain on that account. Everything is in `deploy/cloudflared.yml`.
 
 ```sh
 cloudflared tunnel login
 cloudflared tunnel create tank-in-city
 cloudflared tunnel route dns tank-in-city tank.example.com
-cloudflared tunnel route dns tank-in-city tank-ws.example.com
 ```
 
-Then fill the UUID and paths into `deploy/cloudflared.yml` and run it:
+Then fill the UUID, the credentials path and the hostname into
+`deploy/cloudflared.yml` and run it:
 
 ```sh
 cloudflared tunnel --config deploy/cloudflared.yml run
 ```
 
-The file already has an ingress rule for the game server on port 8080. Nothing
-listens there yet — it is slice 2 — so that rule starts working the day the
-socket lands.
+The config sends `/ws` to the game server on 8080 and everything else to the game
+on 3000, **on one hostname**. That is deliberate: the lobby then opens
+`wss://<its own host>/ws`, so there is no `?server=` to add and no second link to
+send. It is also the only arrangement the browser allows — a page served over
+`https` cannot open a plain `ws://` socket at all, it blocks it as mixed content.
 
-## When multiplayer arrives
+So with a named tunnel the link is just:
 
-Two things change, and both are already handled by the config above.
+```
+https://tank.example.com/lobby
+```
 
-1. **The socket needs its own hostname.** A WebSocket upgrade wants its own
-   route, and the game page is served over `https`. A plain `ws://` connection
-   from an `https` page is blocked by the browser as mixed content, so the
-   socket has to arrive as `wss://` through a tunnel as well. That is the
-   `tank-ws.example.com` rule.
-2. **The client needs to be told where the socket is.** With a quick tunnel the
-   address changes every run, so it cannot be hard-coded. Expect either a
-   `NEXT_PUBLIC_` environment variable or a query parameter on the link. Note
-   that Next bakes `NEXT_PUBLIC_*` in at build time, so changing it means
-   rebuilding — the query parameter avoids that.
+## When the match loop lands
+
+Two things are already handled, and one is left:
+
+1. **The socket's route** — done, above.
+2. **A WebSocket through the tunnel** — verified working.
+3. **Telling the client where the socket is.** Today that is `?server=`. Once
+   the lobby is reachable on the same hostname as the game (a named tunnel, or a
+   deployment that serves both), the default is already right and the parameter
+   is only needed for quick tunnels.
 
 ## Troubleshooting
 
 Messages seen while testing this, and what they mean:
 
-- **`Cannot determine default configuration path`** — normal. It means no named
-  tunnel config was found, which is exactly right for a quick tunnel. Ignore it.
+- **`Cannot determine default configuration path`** — normal. No named tunnel
+  config was found, which is right for a quick tunnel. Ignore it.
 - **`ICMP proxy feature is disabled` / `ping_group_range`** — normal on Linux
   desktop. cloudflared wanted to ping through the tunnel and was not allowed to.
   Nothing you need uses that.
 - **`Environment is healthy`** — the pre-flight check passed. Good.
-- **A friend gets a 502** — the tunnel is up but your server is not. Check that
-  `npm start` is still running and that it is on the same port the tunnel points
-  at.
+- **A friend gets a 502** — the tunnel is up but the thing behind it is not.
+  Check the right server is running on the right port.
+- **The lobby says "could not reach the game server"** — the socket tunnel is
+  missing, or `?server=` points at the wrong one. The page shows the address it
+  tried. `npm run check-lobby` will tell you whether the server is fine.
 - **`npm run share` refuses to start** — it checks the port first, on purpose. A
-  tunnel to a dead port gives friends a 502 with no explanation, which is worse
-  than a clear error here.
+  tunnel to a dead port gives friends a 502 with no explanation.
 - **The page loads but looks wrong** — hard-refresh. The browser may hold a
   cached copy from a previous link.
-- **Editing does not show up with `npm run dev`** — hot reload over a tunnel is
-  not reliable. Reload the page. Friends do not need it, so this only affects
-  you.
+- **Edits do not show up with `npm run dev`** — hot reload over a tunnel is not
+  reliable. Reload the page. Friends do not need it.
 - **cloudflared metrics** — it opens `127.0.0.1:20241/metrics` on your machine,
   localhost only, for its own health numbers. Nothing to do with the game.
 
@@ -154,6 +211,7 @@ Messages seen while testing this, and what they mean:
 
 | File | What it is |
 |---|---|
-| `web/scripts/share.sh` | the quick tunnel, checks the port first, prints the caveats |
-| `deploy/cloudflared.yml` | the named tunnel, both hostnames, ready to fill in |
+| `web/scripts/share.sh` | the quick tunnel, checks the port first, mentions the socket tunnel |
+| `web/scripts/check-lobby.mjs` | drives the lobby protocol against a running server |
+| `deploy/cloudflared.yml` | the named tunnel: `/ws` to the server, the rest to the game |
 | `docs/sharing.md` | this file |

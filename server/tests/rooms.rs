@@ -109,7 +109,7 @@ fn an_empty_password_is_no_password() {
 #[test]
 fn joins_are_rejected_once_the_match_has_started() {
     let (mut reg, code) = lobby(Mode::FreeForAll, &["ann", "bo"]);
-    assert_eq!(reg.start(&code), Ok(()));
+    assert_eq!(reg.start(&code, "ann"), Ok(()));
     assert_eq!(reg.room(&code).unwrap().status, Status::Playing);
     assert_eq!(reg.join(&code, "cy", None), Err(JoinError::InProgress));
 }
@@ -245,10 +245,18 @@ fn start_needs_every_player_ready() {
     reg.join(&code, "bo", None).unwrap();
 
     reg.set_ready(&code, "ann", true).unwrap();
-    assert_eq!(reg.start(&code), Err(StartError::NotAllReady));
+    assert_eq!(reg.start(&code, "ann"), Err(StartError::NotAllReady));
 
     reg.set_ready(&code, "bo", true).unwrap();
-    assert_eq!(reg.start(&code), Ok(()));
+    assert_eq!(reg.start(&code, "ann"), Ok(()));
+}
+
+#[test]
+fn only_the_host_can_start() {
+    let (mut reg, code) = lobby(Mode::FreeForAll, &["ann", "bo"]);
+    assert_eq!(reg.start(&code, "bo"), Err(StartError::NotHost));
+    assert_eq!(reg.room(&code).unwrap().status, Status::Waiting);
+    assert_eq!(reg.start(&code, "ann"), Ok(()));
 }
 
 #[test]
@@ -298,14 +306,14 @@ fn free_for_all_and_coop_need_two_players() {
 
         reg.join(&code, "bo", None).unwrap();
         reg.set_ready(&code, "bo", true).unwrap();
-        assert_eq!(reg.start(&code), Ok(()), "{mode:?} should start with two");
+        assert_eq!(reg.start(&code, "ann"), Ok(()), "{mode:?} should start with two");
     }
 }
 
 #[test]
 fn starting_a_room_that_does_not_exist_is_refused() {
     let mut reg = registry();
-    assert_eq!(reg.start("ZZZZZ"), Err(StartError::NoSuchRoom));
+    assert_eq!(reg.start("ZZZZZ", "ann"), Err(StartError::NoSuchRoom));
 }
 
 #[test]
@@ -324,7 +332,7 @@ fn the_public_list_shows_public_rooms_and_marks_in_progress() {
     reg.join(&playing, "de", None).unwrap();
     reg.set_ready(&playing, "cy", true).unwrap();
     reg.set_ready(&playing, "de", true).unwrap();
-    reg.start(&playing).unwrap();
+    reg.start(&playing, "cy").unwrap();
 
     let list = reg.list_public();
     assert_eq!(list.len(), 2, "a room in progress stays listed");

@@ -6,6 +6,9 @@
 //! the authoritative tick loop (plan section 4, "Who does what").
 //!
 //! Milestone 3 slice 1 is the lobby: codes, the public list, teams, ready
-//! states, and the start check. The socket and the match loop come next.
+//! states, and the start check. Slice 2 puts it on a socket: the lobby messages
+//! of plan section 9, and a `room_state` pushed to the room after every change.
+//! The match loop comes next.
 
 pub mod rooms;
+pub mod ws;

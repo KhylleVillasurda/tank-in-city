@@ -10,40 +10,39 @@
 #   cloudflared tunnel login
 #   cloudflared tunnel create tank-in-city
 #   cloudflared tunnel route dns tank-in-city tank.example.com
-#   cloudflared tunnel route dns tank-in-city tank-ws.example.com
 #
 # Then run it, from the repository root:
 #
 #   cloudflared tunnel --config deploy/cloudflared.yml run
 #
-# Fill in the tunnel UUID and the paths and hostnames below. `cloudflared tunnel
-# list` prints the UUID; the credentials file is written next to it when you
-# create the tunnel.
+# Fill in the tunnel UUID, the credentials path and the hostname below.
+# `cloudflared tunnel list` prints the UUID; the credentials file is written next
+# to it when you create the tunnel.
 
 tunnel: REPLACE-WITH-TUNNEL-UUID
 credentials-file: /home/REPLACE-WITH-YOUR-USER/.cloudflared/REPLACE-WITH-TUNNEL-UUID.json
 
-# cloudflared keeps its own logs down here. It does not log request bodies, so
-# it will not log a room password, but it does log every request path.
+# cloudflared keeps its own logs down here. It does not log request bodies, so it
+# will not log a room password, but it does log every request path.
 loglevel: info
 
 ingress:
-  # The game. This is the hostname to send to friends.
+  # The game server's socket. It shares the hostname with the game on purpose:
+  # the page then opens `wss://<its own host>/ws`, which needs no configuration
+  # in the client and cannot be blocked as mixed content. A page served over
+  # https is not allowed to open a plain `ws://` socket at all.
+  #
+  # Start it with: cd server && cargo run     (it listens on 127.0.0.1:8080)
+  - hostname: tank.example.com
+    path: /ws
+    service: http://localhost:8080
+
+  # The game itself. This is the link to send to friends.
+  #
+  # Start it with: cd web && npm run build && npm start
   - hostname: tank.example.com
     service: http://localhost:3000
 
-  # The game server, once it speaks WebSocket. Nothing is listening on 8080 yet
-  # — this is Milestone 3 slice 2, so leave the rule here and it starts working
-  # the day that lands.
-  #
-  # It needs its own hostname rather than a path on the one above, because a
-  # WebSocket upgrade wants its own route and because the game page is https:
-  # a plain ws:// connection from an https page is blocked as mixed content, so
-  # the socket has to arrive as wss:// through a tunnel too. Verified working
-  # through a quick tunnel, see docs/sharing.md.
-  - hostname: tank-ws.example.com
-    service: http://localhost:8080
-
-  # cloudflared requires a catch-all last. Without it, a hostname that is not
-  # listed above would fall through to the first rule.
+  # cloudflared requires a catch-all last. Without it, a request that matches
+  # neither rule above would fall through to the first one.
   - service: http_status:404

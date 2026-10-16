@@ -9,14 +9,16 @@
 #   cd web && npm run build && npm start     # one terminal
 #   bash scripts/share.sh                    # another
 #
-# What friends can actually do is in docs/sharing.md. Short version: they can
-# play Single Player. Multiplayer is not built yet, so they cannot play each
-# other. This tunnel is the transport it will use when it is.
+# What friends can actually do is in docs/sharing.md. Short version: Single
+# Player works, and the lobby works — they can create and join a room and see
+# each other. A match does not, because the match loop is not built yet.
 
 set -euo pipefail
 
 PORT="${PORT:-3000}"
+GAME_PORT="${GAME_PORT:-8080}"
 TARGET="http://localhost:${PORT}"
+GAME_TARGET="http://localhost:${GAME_PORT}"
 
 if ! command -v cloudflared >/dev/null; then
   cat >&2 <<'EOF'
@@ -29,8 +31,10 @@ EOF
   exit 1
 fi
 
-# A tunnel to a dead port gives friends a 502 and no clue why, so check first.
-if command -v curl >/dev/null; then
+if ! command -v curl >/dev/null; then
+  echo "curl is not installed, skipping the reachability check." >&2
+else
+  # A tunnel to a dead port gives friends a 502 and no clue why, so check first.
   if ! curl -sf -o /dev/null --max-time 5 "$TARGET"; then
     cat >&2 <<EOF
 Nothing is answering on $TARGET.
@@ -44,8 +48,6 @@ too, but it is slower and the link is only as stable as the dev server.
 EOF
     exit 1
   fi
-else
-  echo "curl is not installed, skipping the reachability check." >&2
 fi
 
 cat <<EOF
@@ -58,10 +60,24 @@ Tunnelling $TARGET to a public https:// link.
   Anyone with the link can reach this machine while it runs, so stop it when
   you are finished.
 
-  Friends can play Single Player. They cannot play each other yet: multiplayer
-  is not built. See docs/sharing.md.
+  Friends can play Single Player, and they can meet you in the lobby. They
+  cannot play a match yet. See docs/sharing.md.
 
 EOF
+
+# Only mention the socket tunnel when there is something to tunnel.
+if curl -sf -o /dev/null --max-time 5 "$GAME_TARGET/health" 2>/dev/null; then
+  cat <<EOF
+  The game server is up on $GAME_TARGET. To put the lobby online too, in a
+  third terminal:
+
+    cloudflared tunnel --url $GAME_TARGET
+
+  Then open  <the link above>/lobby?server=wss://<that new link>/ws
+  Both links appear in cloudflared's own box.
+
+EOF
+fi
 
 # exec so Ctrl-C reaches cloudflared directly and the tunnel closes with it.
 exec cloudflared tunnel --url "$TARGET"
