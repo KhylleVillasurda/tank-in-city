@@ -45,7 +45,7 @@ impl Bullet {
         Bullet {
             x: cx + dx * reach,
             y: cy + dy * reach,
-            dir: t.dir as u8,
+            dir: t.dir,
             speed: t.bullet_speed(),
             owner: t.id,
         }

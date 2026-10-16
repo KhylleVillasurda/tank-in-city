@@ -73,6 +73,12 @@ Do not redo these; build on them.
   by accident. Raise the budget deliberately when a feature needs the room.
 - **A latent bug fixed:** `stage::base_center`'s no-base fallback returned tile
   indices while the real path returned world units.
+- **`cargo clippy` is clean in both crates, and is now part of the check.**
+  Narrowing `hp` to `u8` turned two `hp <= 0` comparisons into clippy errors
+  (`absurd_extreme_comparisons` is deny-by-default), now `hp == 0`. Two smaller
+  lints were pre-existing and are also gone: a redundant `as u8` cast in
+  `bullet.rs`, an unnecessary `let` in `ai.rs`, and a complex type in
+  `tests/engine.rs`.
 - **`server/` is new: the room registry.** A second Rust crate (`game-core` by
   path, plus `tracing`). Codes, the public room list, teams, ready states, host
   transfer, and the start check — every rule in plan section 3 that needs no
@@ -83,11 +89,13 @@ Do not redo these; build on them.
 
 ## How to verify
 
-All six must pass before a change is called done.
+All of these must pass before a change is called done.
 
 ```sh
 cd game-core && cargo test          # 28 tests: 23 engine, 1 sizes, 4 stage data
+cd game-core && cargo clippy --all-targets   # must be silent
 cd server && cargo test             # 24 tests: the room rules
+cd server && cargo clippy --all-targets      # must be silent
 cd web && npm run check             # headless wasm ABI and rules
 cd web && npm run check-audio       # headless sound triggers
 cd web && npx tsc --noEmit          # type check
@@ -101,7 +109,7 @@ graphify update .
 ```
 
 Current state: 28 tests pass in `game-core` and 24 in `server`, no compiler
-warnings and clippy is clean, `npm run check` reports
+warnings and clippy is silent in both, `npm run check` reports
 `wasm ABI ok: score=2700 lives=1 stage=1 enemiesLeft=4 idleGameOver=30s`,
 `npm run check-audio` reports `audio ok`, `tsc` and `build` are clean, and the
 graph was 668 nodes / 1001 edges / 47 communities at the last update.

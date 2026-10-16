@@ -315,10 +315,17 @@ base that returned *tile indices* while the normal path returned *world units*,
 so a baseless stage would have pointed every enemy at the top-left corner. Dormant
 (the three real stages all have a base) and fixed while passing through.
 
+**And a lint that proves the point.** Narrowing `hp` to `u8` made the two
+`hp <= 0` checks in `lib.rs` clippy errors: `absurd_extreme_comparisons` is
+deny-by-default, because on an unsigned type `<= 0` is just `== 0` with a case
+that can never happen. They are `hp == 0` now. `cargo clippy --all-targets` is
+silent, and is part of the check.
+
 ## Verification performed
 
 ```sh
 cd game-core && cargo test                    # 28 tests: 23 engine, 1 sizes, 4 stage data
+cd game-core && cargo clippy --all-targets    # silent
 cd web && npm run check                       # headless wasm ABI + rules check
 cd web && npm run check-audio                 # headless sound-trigger check
 cd web && npx tsc --noEmit && npm run build   # type check and production build

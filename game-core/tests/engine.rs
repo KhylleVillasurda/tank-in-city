@@ -360,7 +360,9 @@ fn clearing_the_wave_advances_to_the_next_stage() {
 
 #[test]
 fn the_player_takes_a_power_up_lying_on_its_tile() {
-    let cases: Vec<(PowerUp, fn(&World) -> bool)> = vec![
+    /// A power-up and the check that its effect landed on the world.
+    type Case = (PowerUp, fn(&World) -> bool);
+    let cases: Vec<Case> = vec![
         (PowerUp::Shield, |w| w.player.shield > 0),
         (PowerUp::Speed, |w| w.player.speed_boost > 0),
         (PowerUp::Upgrade, |w| w.player.upgrade == 1),

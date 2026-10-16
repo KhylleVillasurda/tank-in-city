@@ -34,13 +34,11 @@ pub fn update(tank: &mut Tank, rng: &mut Rng, base: (i32, i32)) -> bool {
         tank.turn_timer -= 1;
     }
 
-    let fire = if tank.fire_timer == 0 {
+    if tank.fire_timer == 0 {
         tank.fire_timer = rng.range(FIRE_TICKS.0, FIRE_TICKS.1) as u16;
         true
     } else {
         tank.fire_timer -= 1;
         false
-    };
-
-    fire
+    }
 }

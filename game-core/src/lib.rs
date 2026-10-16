@@ -301,7 +301,7 @@ impl World {
         // --- Deaths ---
         for i in 0..n {
             let idx = 1 + i;
-            if all[idx].alive && all[idx].hp <= 0 {
+            if all[idx].alive && all[idx].hp == 0 {
                 all[idx].alive = false;
                 self.score += all[idx].kind().score();
                 if all[idx].carries {
@@ -313,7 +313,7 @@ impl World {
                 }
             }
         }
-        if all[0].alive && all[0].hp <= 0 {
+        if all[0].alive && all[0].hp == 0 {
             all[0].alive = false;
             self.lives = self.lives.saturating_sub(1);
             if self.lives == 0 {
