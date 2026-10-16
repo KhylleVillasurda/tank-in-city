@@ -1,8 +1,8 @@
 # Handoff
 
 Read this first. It is the state of the project at the end of the session that
-added sound and the 8-bit presentation, written for whoever picks it up next —
-human or AI.
+added the server's room registry, written for whoever picks it up next — human or
+AI.
 
 Everything here was checked, not remembered. Where a fact lives in another file,
 this points at it instead of copying it, so the two cannot drift apart.
@@ -18,11 +18,14 @@ rules, milestones, repo layout. Read it before proposing anything.
 | 2 — Single Player | done, play-tested, closed |
 | 5 — sound | **pulled forward and working**, six of twelve files still missing |
 | 5 — sprites and the credits page | not started |
-| 3 — rooms and netplay | not started |
+| 3 — rooms and netplay | **slice 1 done** (the lobby); the match loop and the socket are next |
 | 4 — accounts and leaderboards | not started |
 
 One mode exists (Single Player). The engine holds those rules directly rather
 than behind a `Mode` enum; the seam is `World::new` plus `rules.rs`.
+
+`server/` exists now. It is a second Rust crate beside `game-core`, with **no
+Cargo workspace** — a path dependency, so the wasm build script is untouched.
 
 ## Read these, in this order
 
@@ -39,6 +42,8 @@ than behind a `Mode` enum; the seam is `World::new` plus `rules.rs`.
    function.
 8. `docs/sprites.md` — the drawing sizes for the artwork. Read before drawing or
    placing any sprite.
+9. `docs/milestone-3.md` — the server and the lobby rules, plus what slice 1 left
+   out.
 
 ## What the last session changed
 
@@ -68,13 +73,21 @@ Do not redo these; build on them.
   by accident. Raise the budget deliberately when a feature needs the room.
 - **A latent bug fixed:** `stage::base_center`'s no-base fallback returned tile
   indices while the real path returned world units.
+- **`server/` is new: the room registry.** A second Rust crate (`game-core` by
+  path, plus `tracing`). Codes, the public room list, teams, ready states, host
+  transfer, and the start check — every rule in plan section 3 that needs no
+  socket. 24 tests, one per rule. `docs/milestone-3.md` has the decisions and
+  what slice 1 left out. **It does not run a match yet:** the engine is still
+  single-player, so the match loop needs the engine to hold several players
+  first.
 
 ## How to verify
 
-All five must pass before a change is called done.
+All six must pass before a change is called done.
 
 ```sh
 cd game-core && cargo test          # 28 tests: 23 engine, 1 sizes, 4 stage data
+cd server && cargo test             # 24 tests: the room rules
 cd web && npm run check             # headless wasm ABI and rules
 cd web && npm run check-audio       # headless sound triggers
 cd web && npx tsc --noEmit          # type check
@@ -87,10 +100,11 @@ Then, because code changed:
 graphify update .
 ```
 
-Current state: 28 tests pass, no compiler warnings, `npm run check` reports
+Current state: 28 tests pass in `game-core` and 24 in `server`, no compiler
+warnings and clippy is clean, `npm run check` reports
 `wasm ABI ok: score=2700 lives=1 stage=1 enemiesLeft=4 idleGameOver=30s`,
 `npm run check-audio` reports `audio ok`, `tsc` and `build` are clean, and the
-graph was 554 nodes / 816 edges / 26 communities at the last update.
+graph was 668 nodes / 1001 edges / 47 communities at the last update.
 
 ## Traps that will cost you an hour
 
@@ -126,9 +140,20 @@ graph was 554 nodes / 816 edges / 26 communities at the last update.
   purpose. Do not "tidy" it back.
 - **Audio cannot be judged here.** Verify a trigger with `npm run check-audio`;
   never claim a sound "sounds right".
-- **Everything is uncommitted.** `HEAD` is `27d319c` ("Add Tank In City project
-  plan") and every source file is untracked. `graphify-out/` and
-  `web/public/game_core.wasm` are generated and ignored.
+- **The work is committed.** `main` (renamed from `master`) has three commits:
+  the plan, then "Add Milestones 1 and 2: engine, single player, audio,
+  presentation", then "Add Milestone 3 slice 1: the server crate and the room
+  registry" (HEAD). `git log --oneline` has the hashes — this file deliberately
+  does not, because amending a commit changes them. There is no remote yet.
+  `graphify-out/`, `web/public/game_core.wasm` and the raw audio in `assets/` are
+  generated or deliberately excluded and stay ignored.
+- **There are two Rust crates and no Cargo workspace.** `game-core/` and
+  `server/`, each with its own `Cargo.lock` and `target/`. `server/` reaches
+  `game-core` by path. Adding a workspace would move the build target directory
+  and touch `web/scripts/build-wasm.sh`, which works — do not add one casually.
+- **`server/` does not run a match.** The engine is single-player, so a room
+  reaches `Playing` and stops. Do not wire a `World` into a room before the
+  engine can hold several players.
 
 ## Constraints to keep
 
@@ -172,15 +197,20 @@ discoveries, and do not re-ask them every turn.
 
 In the order that pays best:
 
-1. **Restart the dev server, then look at the title screen.** The last session's
-   presentation work (font, scanlines, animations) is verified in a clean build
-   but the user's running server needs a restart to show it. Confirm with the
-   user that it looks right.
-2. **The six missing sounds.** `docs/deferred.md` lists each one with the event
+1. **Milestone 3 slice 2: the WebSocket layer and the lobby protocol.** Axum
+   plus `server/src/ws/`, speaking the messages in plan section 9 that the
+   registry already answers: `create_room`, `join_room`, `list_rooms`,
+   `set_ready`, `leave_room`, `room_state`, `room_list`, `error`. **No engine
+   change**, so it cannot disturb the movement path — and it is the first slice
+   the user could actually see in a browser.
+2. **Milestone 3 slice 3: the engine holds several players.** `World` has one
+   `player` tank and an `enemies` array today. PvP needs N player tanks and no
+   AI (team modes never have AI), which is what the match loop waits on. This is
+   the delicate slice: it changes the snapshot layout, so all three constant
+   lists and `web/game/wasm.ts` move with it.
+3. **The six missing sounds.** `docs/deferred.md` lists each one with the event
    that triggers it. Adding one is a file plus a line in `web/game/audio.ts`.
-3. **The engine loop is still undecided** — `tank_moving_by_kenny.ogg` is wired,
+4. **The engine loop is still undecided** — `tank_moving_by_kenny.ogg` is wired,
    `tank_moving.ogg` is a different sound, and only an ear can choose.
-4. **Sprites** (Milestone 5) would change the game's look more than anything
-   else left on the list.
-5. **Commit.** Everything is untracked and has been for two sessions. That is
-   the largest single risk in this repository.
+5. **Sprites** (Milestone 5) would change the game's look more than anything
+   else left on the list, but they are waiting on the user's art.

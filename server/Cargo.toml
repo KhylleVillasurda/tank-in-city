@@ -1,0 +1,10 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+description = "Tank In City server: rooms now, the authoritative match loop from Milestone 3 on."
+
+[dependencies]
+game-core = { path = "../game-core" }
+tracing = "0.1"
+tracing-subscriber = "0.3"

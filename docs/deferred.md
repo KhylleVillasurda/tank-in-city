@@ -74,13 +74,39 @@ three fifths of the list are done by reuse rather than by new files.
   `tank.rs`; every stage has the same 20 enemies otherwise. Left out because
   difficulty is closed by play test, not because it is hard.
 
+## Server
+
+Milestone 3 slice 1 (the lobby) is in. These are what it left out on purpose.
+
+- **The match loop.** A room reaches `Playing` and stops. The engine is still
+  single-player — one player tank plus AI — so a room cannot run a match until
+  `game-core` holds several players. That engine change is the next slice, and
+  the match loop follows it. This is why slice 1 has no `World` in it.
+- **The socket.** No HTTP, no WebSocket, no Axum yet. The registry is a plain
+  library, so the protocol layer plugs into it without rework.
+- **Session tokens and reconnect.** Plan section 5 issues a token on join and
+  allows a 30-second reconnect. The token is only useful with reconnect, and
+  reconnect needs the match loop, so both wait. `Player` has no identity across
+  a disconnect yet.
+- **Swap requests and host-move.** The plan has players requesting a swap that
+  another player accepts, and the host moving players directly. Both change team
+  assignment, which is the one thing that would make the per-side maximum in
+  `Room::can_start` a real check again — today joining fills the smaller side
+  first, so no side can exceed its share. Add the check with the feature.
+- **The room password is plain text in memory.** It is a lobby password, not an
+  account credential, and the client sends it in the clear on every join, so
+  hashing it would protect nothing that is not already exposed. Revisit when
+  Milestone 4 brings real accounts and a reason to hold a secret.
+- **A room code is guessable.** 33 million codes, and a private room also has a
+  password. Fine for a game lobby; not an access token.
+
 ## Later milestones
 
 Scheduled in `plan.md`, listed here only so this file is the one place to look.
 
 | Skipped | Arrives in |
 |---|---|
-| Rooms, hosting, joining, client prediction, server authority | Milestone 3 |
+| Rooms, hosting, joining, the match loop, client prediction, server authority | Milestone 3 (the lobby is done; see "Server" above) |
 | Accounts, email verification, profiles, friends, chat, spectating | Milestone 4 |
 | Local and online leaderboards, persistent scores | Milestone 4 |
 | Sprites, the credits page | Milestone 5 |
