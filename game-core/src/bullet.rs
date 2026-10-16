@@ -35,6 +35,8 @@ pub struct Bullet {
     pub speed: i32,
     /// `Tank::id` of the tank that fired it, so it cannot hit its owner.
     pub owner: u8,
+    /// The firing tank's side, so a shot passes through its own side.
+    pub team: u8,
 }
 
 impl Bullet {
@@ -48,6 +50,7 @@ impl Bullet {
             dir: t.dir,
             speed: t.bullet_speed(),
             owner: t.id,
+            team: t.team,
         }
     }
 
@@ -81,14 +84,9 @@ impl Bullet {
             && self.y - BULLET_RADIUS < r.3
     }
 
-    /// True when the player fired it. 0 is the player, 1+ are enemies.
-    pub fn is_player(&self) -> bool {
-        self.owner == 0
-    }
-
-    /// True when `tank` is on the bullet's own side. 0 is the player, anything
-    /// else is an enemy.
+    /// True when `tank` is on the bullet's own side. Friendly fire is a room
+    /// setting the caller applies; the bullet only reports the side.
     pub fn same_side_as(&self, tank: &Tank) -> bool {
-        (self.owner == 0) == (tank.id == 0)
+        self.team == tank.team
     }
 }

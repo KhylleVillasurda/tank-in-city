@@ -10,13 +10,14 @@ const x = instance.exports;
 const FIELDS = [
   "tile", "tankSize", "worldW", "worldH", "mapW", "mapH", "subpixels", "tickHz",
   "snapLen", "snapHeader", "snapEnemy", "snapBullet", "snapSpawn",
-  "snapTanksOffset", "snapBulletsOffset", "snapSpawnsOffset", "snapNoDrop",
+  "snapEnemiesOffset", "snapBulletsOffset", "snapSpawnsOffset", "snapNoDrop",
   "maxEnemies", "maxBullets", "maxSpawns",
   "inputUp", "inputDown", "inputLeft", "inputRight", "inputFire",
   "statePlaying", "stateStageClear", "stateGameOver",
   "extraLife", "shield", "freeze", "destroyAll", "upgrade", "speed", "steelWalls",
   "basic", "fast", "power", "armor",
   "tileBrick", "tileSteel", "tileWater", "tileTree", "tileBase", "inputConfirm",
+  "snapPlayer", "snapPlayersOffset", "maxPlayers",
 ];
 const raw = new Int32Array(x.memory.buffer, x.tc_constants_ptr(), FIELDS.length);
 const c = Object.fromEntries(FIELDS.map((f, i) => [f, raw[i]]));
@@ -26,10 +27,14 @@ assert(c.tickHz === 60, "fixed 60 Hz timestep");
 assert(c.tile === 16 * c.subpixels, "tile is 16 px");
 assert(c.tankSize === 2 * c.tile, "tank is 2x2 tiles");
 assert(c.worldW === c.mapW * c.tile && c.worldH === c.mapH * c.tile, "world size");
-assert(c.snapTanksOffset === c.snapHeader, "tank records follow the header");
+assert(c.snapPlayersOffset === c.snapHeader, "player records follow the header");
 assert(
-  c.snapBulletsOffset === c.snapTanksOffset + c.maxEnemies * c.snapEnemy,
-  "bullets follow tanks",
+  c.snapEnemiesOffset === c.snapPlayersOffset + c.maxPlayers * c.snapPlayer,
+  "enemies follow players",
+);
+assert(
+  c.snapBulletsOffset === c.snapEnemiesOffset + c.maxEnemies * c.snapEnemy,
+  "bullets follow enemies",
 );
 assert(
   c.snapSpawnsOffset === c.snapBulletsOffset + c.maxBullets * c.snapBullet,
@@ -41,25 +46,39 @@ assert(
 );
 assert(c.snapNoDrop === -1, "no-drop sentinel");
 assert(c.statePlaying === 0 && c.stateStageClear === 1 && c.stateGameOver === 2, "states");
+assert(c.maxPlayers === 6, "3v3 is the widest room (plan section 3)");
 
 const snapshot = () => new Int32Array(x.memory.buffer, x.tc_snapshot_ptr(), c.snapLen);
 const tiles = () => new Uint8Array(x.memory.buffer, x.tc_map_ptr(), c.mapW * c.mapH);
 
 const H = {
-  tick: 0, state: 1, score: 2, lives: 3, stage: 4, enemiesLeft: 5,
-  px: 6, py: 7, alive: 9, invuln: 15, baseAlive: 16, enemies: 17, bullets: 18,
-  spawns: 19, dropKind: 20,
+  tick: 0, state: 1, stage: 2, enemiesLeft: 3, baseAlive: 4, players: 5,
+  enemies: 6, bullets: 7, spawns: 8, dropKind: 9,
+};
+
+/** Player 0's record. Single Player is the only run the browser starts. */
+const P = {
+  x: c.snapPlayersOffset,
+  y: c.snapPlayersOffset + 1,
+  dir: c.snapPlayersOffset + 2,
+  alive: c.snapPlayersOffset + 3,
+  hp: c.snapPlayersOffset + 4,
+  team: c.snapPlayersOffset + 10,
+  lives: c.snapPlayersOffset + 11,
+  score: c.snapPlayersOffset + 12,
 };
 
 function checkInvariants(s, where) {
   assert(s[H.state] >= 0 && s[H.state] <= 2, `${where}: known state`);
-  assert(s[H.lives] >= 0, `${where}: lives`);
+  assert(s[H.players] >= 1 && s[H.players] <= c.maxPlayers, `${where}: players`);
+  assert(s[P.lives] >= 0, `${where}: lives`);
+  assert(s[P.score] >= 0, `${where}: score`);
   assert(s[H.stage] >= 1, `${where}: stage`);
   assert(s[H.enemiesLeft] >= 0 && s[H.enemiesLeft] <= 20, `${where}: enemies left`);
   assert(s[H.enemies] <= c.maxEnemies, `${where}: concurrent enemies`);
   assert(s[H.bullets] <= c.maxBullets, `${where}: concurrent bullets`);
-  assert(s[H.px] >= c.tile && s[H.px] + c.tankSize <= c.worldW, `${where}: player x`);
-  assert(s[H.py] >= 0 && s[H.py] + c.tankSize <= c.worldH, `${where}: player y`);
+  assert(s[P.x] >= c.tile && s[P.x] + c.tankSize <= c.worldW, `${where}: player x`);
+  assert(s[P.y] >= 0 && s[P.y] + c.tankSize <= c.worldH, `${where}: player y`);
   assert(s[H.dropKind] >= c.snapNoDrop && s[H.dropKind] <= 6, `${where}: drop kind`);
 }
 
@@ -98,8 +117,9 @@ const afterConfirm = snapshot();
 // The player must not move, shoot or lose anything. The clock, the spawn
 // flashes and the wave count do move on their own, so those are left out.
 for (const [name, i] of Object.entries({
-  state: 1, score: 2, lives: 3, stage: 4,
-  px: 6, py: 7, dir: 8, alive: 9, hp: 10, bullets: 18,
+  state: H.state, stage: H.stage,
+  score: P.score, lives: P.lives, x: P.x, y: P.y, dir: P.dir, alive: P.alive, hp: P.hp,
+  bullets: H.bullets,
 })) {
   assert(afterConfirm[i] === beforeConfirm[i], `confirm during play left ${name} alone`);
 }
@@ -109,7 +129,10 @@ assert(afterConfirm[H.state] === c.statePlaying, "still playing");
 x.tc_init(1);
 const start = snapshot();
 assert(start[H.tick] === 0, "tick starts at zero");
-assert(start[H.lives] === 3, "three lives");
+assert(start[H.players] === 1, "single player is one player");
+assert(start[P.lives] === 3, "three lives");
+assert(start[P.score] === 0, "no score yet");
+assert(start[P.team] === 0, "the player is on side A");
 assert(start[H.stage] === 1, "stage one");
 assert(start[H.enemiesLeft] === 20, "twenty enemies in a stage");
 assert(start[H.baseAlive] === 1, "base standing");
@@ -128,7 +151,7 @@ let scored = 0;
 let long = null;
 for (const seed of [1, 2, 3, 4]) {
   const result = run(seed, 6000);
-  if (result.snap[H.score] > 0) scored++;
+  if (result.snap[P.score] > 0) scored++;
   long ??= result;
 }
 assert(scored > 0, "enemies were destroyed and scored");
@@ -163,7 +186,7 @@ assert(a !== d, "different seeds diverge");
 
 console.log(
   "wasm ABI ok: score=%d lives=%d stage=%d enemiesLeft=%d idleGameOver=%ds statesSeen=%s",
-  long.snap[H.score], long.snap[H.lives], long.snap[H.stage],
+  long.snap[P.score], long.snap[P.lives], long.snap[H.stage],
   long.snap[H.enemiesLeft], Math.round(over / 60), [...stages].join(","),
 );
 

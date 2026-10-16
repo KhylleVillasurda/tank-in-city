@@ -18,9 +18,10 @@ use game_core::World;
 
 /// One whole run of game state. It was 1384 bytes before the widths were
 /// tightened; most of the saving is the `Tank` counters and the 16 remembered
-/// steel tiles. Milestone 3 gives each room its own `World`, which is when this
-/// number starts to multiply.
-const WORLD_BUDGET: usize = 1144;
+/// steel tiles. Milestone 3's several-players change put a `Tank` and its
+/// run-long state on every one of the six player slots, which is most of the
+/// 1144 -> 1392. A room owns one `World`.
+const WORLD_BUDGET: usize = 1392;
 
 #[test]
 fn state_stays_narrow() {
@@ -29,7 +30,10 @@ fn state_stays_narrow() {
         actual <= WORLD_BUDGET,
         "World grew to {actual} bytes, budget is {WORLD_BUDGET}. Did a field widen?"
     );
-    assert!(size_of::<Tank>() <= 28, "Tank grew to {}", size_of::<Tank>());
+    // 28 -> 32: the side byte and the last-hit-by byte overflowed the 28-byte
+    // layout, so the struct picked up 4 bytes of padding. Six player tanks and
+    // four enemies is ten of them.
+    assert!(size_of::<Tank>() <= 32, "Tank grew to {}", size_of::<Tank>());
     assert!(
         size_of::<Bullet>() <= 16,
         "Bullet grew to {}",

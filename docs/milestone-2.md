@@ -307,6 +307,12 @@ framing has not changed: this is hygiene, not a performance fix. It matters
 because Milestone 3 runs one `World` per room and the room count is the
 multiplier — and because a field that says `u8` documents its own range.
 
+> **These are Milestone 2's numbers, and Milestone 3 has moved them.** The engine
+> now holds six players, so `World` is **1,392 bytes** and `Tank` is **32** — the
+> reason for each is next to the number in `tests/sizes.rs`. The snapshot is
+> `[i32; 191]` (764 bytes). The *reasoning* below is what still holds, and is why
+> this section is still the place to read before narrowing a field.
+
 `tests/sizes.rs` pins the sizes so a field cannot quietly widen back. Raise the
 number deliberately, in the same commit as the feature that needs the room.
 

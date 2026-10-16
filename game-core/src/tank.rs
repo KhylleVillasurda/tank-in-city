@@ -3,10 +3,18 @@
 use crate::map::{Map, TANK_SIZE, TILE, WORLD_H, WORLD_W};
 use crate::rng::Rng;
 
+/// The most players one match can hold: 3v3 (plan section 3, Room modes).
+pub const MAX_PLAYERS: usize = 6;
 /// Up to 4 enemies on the map at once (plan section 6, Enemy waves).
 pub const MAX_ENEMIES: usize = 4;
-/// The player plus the enemies.
-pub const MAX_TANKS: usize = 1 + MAX_ENEMIES;
+/// Everyone on the map at once. Only Co-op has players and enemies together.
+pub const MAX_TANKS: usize = MAX_PLAYERS + MAX_ENEMIES;
+
+/// Sides. Players share a side in team modes; Free For All gives every player
+/// a side of its own, which is what makes friendly fire always on there.
+pub const TEAM_A: u8 = 0;
+/// The side the enemies are on, and the side that attacks the base.
+pub const TEAM_B: u8 = 1;
 /// Armour tops out here however deep the run goes.
 pub const MAX_ARMOR_HP: u8 = 10;
 
@@ -151,7 +159,8 @@ pub type Rect = (i32, i32, i32, i32);
 #[derive(Clone, Copy)]
 pub struct Tank {
     /// Stable id, so a bullet in flight still knows its owner after the
-    /// enemy list is compacted. 0 is always the player.
+    /// enemy list is compacted. Players own `0..MAX_PLAYERS`; enemies run
+    /// above that, so no enemy can collide with a player's id.
     pub id: u8,
     pub kind: u8,
     pub x: i32,
@@ -179,6 +188,11 @@ pub struct Tank {
     pub frozen: u16,
     /// A bonus enemy: flashes, and drops a power-up when destroyed.
     pub carries: bool,
+    /// Which side this tank is on. `spawn` puts enemies on `TEAM_B`.
+    pub team: u8,
+    /// `Tank::id` of whoever last hit this tank, so a kill can be credited to
+    /// a player. Left at 0, which is player 0.
+    pub last_hit_by: u8,
 }
 
 impl Default for Tank {
@@ -201,6 +215,8 @@ impl Default for Tank {
             speed_boost: 0,
             frozen: 0,
             carries: false,
+            team: TEAM_A,
+            last_hit_by: 0,
         }
     }
 }
@@ -215,6 +231,7 @@ impl Tank {
             dir: dir as u8,
             alive: true,
             hp: kind.hp(stage),
+            team: if kind.is_enemy() { TEAM_B } else { TEAM_A },
             ..Tank::default()
         }
     }

@@ -30,7 +30,10 @@ const ENEMY_COLORS = ["#34d399", "#9ca3af", "#22d3ee", "#a78bfa", "#f87171"];
 /** Armour changes colour with each hit taken (plan section 6). */
 const ARMOUR_COLORS = ["#f87171", "#fb923c", "#facc15", "#e5e7eb"];
 
-const PLAYER_COLOR = "#34d399";
+/** Indexed by team: side A, side B, then anything else. Side A is the player's
+ * own colour in Single Player, where it is the only team on the map. */
+const TEAM_COLORS = ["#34d399", "#f472b6", "#facc15"];
+
 const BACKGROUND = "#0b0b0f";
 
 /** Letter drawn on each power-up, from the `PowerUp` enum order. */
@@ -146,9 +149,9 @@ export function createRenderer(
       });
     }
 
-    if (snapshot.player.alive) {
-      const player = snapshot.player;
-      drawTank(player.x, player.y, player.dir, PLAYER_COLOR, {
+    for (const player of snapshot.players) {
+      if (!player.alive) continue;
+      drawTank(player.x, player.y, player.dir, TEAM_COLORS[player.team] ?? TEAM_COLORS[0], {
         shield: player.shield > 0,
         // Respawn invulnerability blinks; a shield is a steady outline.
         blink: player.invuln > 0 && Math.floor(player.invuln / 6) % 2 === 0,

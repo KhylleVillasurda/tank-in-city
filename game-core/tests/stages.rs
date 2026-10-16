@@ -7,6 +7,15 @@ use game_core::{MAP_H, MAP_W};
 
 const SOLID: [Tile; 4] = [Tile::Brick, Tile::Steel, Tile::Water, Tile::Base];
 
+/// Every spawn marker a stage declares: the players' first, then the enemies'.
+fn all_spawns(s: &Stage) -> Vec<(u8, u8)> {
+    s.player_spawns[..s.player_spawn_count]
+        .iter()
+        .copied()
+        .chain(s.enemy_spawns[..s.spawn_count].iter().copied())
+        .collect()
+}
+
 fn stage_texts() -> Vec<(&'static str, Stage)> {
     (1..=stage::COUNT as u32)
         .map(|n| {
@@ -36,10 +45,7 @@ fn every_stage_is_well_formed_and_connected() {
 
         // Spawnpoints clear enough for a 2x2 tank.
         assert!(s.spawn_count >= 1, "{name}: no enemy spawns");
-        for (tx, ty) in [s.player_spawn]
-            .into_iter()
-            .chain(s.enemy_spawns[..s.spawn_count].iter().copied())
-        {
+        for (tx, ty) in all_spawns(&s) {
             // Tile indices are `u8` in the World; the arithmetic here wants `i32`.
             let (tx, ty) = (tx as i32, ty as i32);
             for dy in 0..2 {
@@ -60,7 +66,7 @@ fn every_stage_is_well_formed_and_connected() {
                 (0..2).all(|a| (0..2).all(|b| !SOLID.contains(&s.map().get(x + a, y + b))))
             })
             .collect();
-        let start = (s.player_spawn.0 as i32, s.player_spawn.1 as i32);
+        let start = (s.player_spawn(0).0 as i32, s.player_spawn(0).1 as i32);
         assert!(free.contains(&start), "{name}: player spawn unreachable");
 
         let mut seen = vec![start];
@@ -72,6 +78,15 @@ fn every_stage_is_well_formed_and_connected() {
                     stack.push((nx, ny));
                 }
             }
+        }
+        // Co-op puts two players on the map at once, so every player spawn has
+        // to be somewhere a tank can reach, not just the first.
+        for i in 0..s.player_spawn_count {
+            let spawn = s.player_spawn(i);
+            assert!(
+                seen.contains(&(spawn.0 as i32, spawn.1 as i32)),
+                "{name}: player spawn {i} at {spawn:?} is cut off"
+            );
         }
         for spawn in &s.enemy_spawns[..s.spawn_count] {
             let spawn = (spawn.0 as i32, spawn.1 as i32);
@@ -88,7 +103,7 @@ fn stage_numbers_wrap_around() {
     let first = stage::load(1);
     let wrapped = stage::load(stage::COUNT as u32 + 1);
     assert_eq!(first.tiles, wrapped.tiles, "the endless run cycles the maps");
-    assert_eq!(first.player_spawn, wrapped.player_spawn);
+    assert_eq!(first.player_spawns, wrapped.player_spawns);
 }
 
 #[test]
@@ -97,12 +112,24 @@ fn stage_zero_is_treated_as_the_first_stage() {
 }
 
 #[test]
+fn every_stage_can_seat_a_co_op_pair() {
+    for (name, s) in stage_texts() {
+        assert!(
+            s.player_spawn_count >= 2,
+            "{name}: Co-op needs a spawn for the second player"
+        );
+        assert_ne!(
+            s.player_spawn(0),
+            s.player_spawn(1),
+            "{name}: the two players would start inside each other"
+        );
+    }
+}
+
+#[test]
 fn spawn_markers_land_on_empty_tiles() {
     for (name, s) in stage_texts() {
-        for (tx, ty) in [s.player_spawn]
-            .into_iter()
-            .chain(s.enemy_spawns[..s.spawn_count].iter().copied())
-        {
+        for (tx, ty) in all_spawns(&s) {
             assert!(
                 (tx as usize) < MAP_W && (ty as usize) < MAP_H,
                 "{name}: spawn marker at ({tx}, {ty}) is off the map"

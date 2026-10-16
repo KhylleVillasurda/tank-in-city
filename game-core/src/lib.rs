@@ -32,12 +32,14 @@ use rules::{
     START_LIVES, STEEL_WALLS_TICKS,
 };
 use stage::MAX_SPAWNS;
-use tank::{Dir, Kind, Tank, MAX_ENEMIES, MAX_TANKS};
+use tank::{Dir, Kind, Tank, MAX_ENEMIES, MAX_PLAYERS, MAX_TANKS, TEAM_A};
 
 pub use rules::{MAP_H, MAP_W, TICK_HZ};
 
 /// Room for the base's brick ring: a 2x2 base has 12 neighbours.
 const MAX_STEEL_TILES: usize = 16;
+/// Enemy ids start here, so no enemy id can ever collide with a player's.
+const FIRST_ENEMY_ID: u8 = MAX_PLAYERS as u8;
 /// Minimum gap between the player's shots. The in-flight limit does most of
 /// the work; this stops key-mashing from feeling different.
 pub const PLAYER_FIRE_COOLDOWN: u16 = 20;
@@ -62,7 +64,7 @@ pub enum State {
 }
 
 /// One tick of player intent. The same shape the WebSocket `input` message
-/// will carry in Milestone 3 (plan section 9).
+/// carries in Milestone 3 (plan section 9).
 #[derive(Clone, Copy)]
 pub struct Input {
     pub bits: u32,
@@ -97,14 +99,26 @@ pub struct World {
     pub state: State,
     /// Stage numbers are 1-based, matching the stage files.
     pub stage: u32,
-    pub score: i32,
-    pub lives: u8,
     pub base_alive: bool,
     pub map: Map,
-    pub player: Tank,
-    /// Tile indices, not pixels.
-    pub player_spawn: (u8, u8),
-    pub respawn_timer: u8,
+
+    /// The players, slots `0..player_count`. Single Player and Co-op put every
+    /// one of them on the same side.
+    pub players: [Tank; MAX_PLAYERS],
+    pub player_count: usize,
+    /// Per player, indexed with `players`: what survives a respawn. Positions
+    /// stay `i32` here for the same reason they do in `Tank`.
+    pub player_lives: [u8; MAX_PLAYERS],
+    pub player_scores: [i32; MAX_PLAYERS],
+    /// Ticks until that player respawns; 0 while alive, or out of lives.
+    pub player_respawn: [u8; MAX_PLAYERS],
+    /// Tile indices, not pixels. One per player, from the stage's `P` markers.
+    pub player_spawns: [(u8, u8); MAX_PLAYERS],
+
+    /// Whether the AI wave system runs at all: Single Player and Co-op.
+    pub waves: bool,
+    /// Whether a shot can hurt its own side (plan section 6, Friendly fire).
+    pub friendly_fire: bool,
 
     pub enemies: [Tank; MAX_ENEMIES],
     pub enemy_count: usize,
@@ -124,7 +138,7 @@ pub struct World {
 
     pub rng: Rng,
     next_id: u8,
-    next_extra_life: i32,
+    next_extra_life: [i32; MAX_PLAYERS],
     /// Tile indices, not pixels. Sixteen tiles to remember costs 32 bytes as
     /// `u8` pairs and 128 as `i32` pairs.
     steel_tiles: [(u8, u8); MAX_STEEL_TILES],
@@ -133,19 +147,56 @@ pub struct World {
     base_center: (i32, i32),
 }
 
+/// What the engine needs to know about a mode. Everything else in plan
+/// section 6 — rounds, best-of-3, the time limit, sudden death, spectating,
+/// scoring — belongs to the match loop, not to the simulation.
+#[derive(Clone, Copy)]
+pub struct Setup {
+    /// How many players. 1 is Single Player, 2 is Co-op or 1v1, up to 6.
+    pub players: u8,
+    /// Whether the AI wave system runs. Single Player and Co-op only.
+    pub waves: bool,
+    /// Whether a shot can hurt its own side. Free For All always says yes,
+    /// which falls out of giving each player a side of their own.
+    pub friendly_fire: bool,
+    /// Which side each player is on, in slot order. Team modes share a side.
+    pub teams: [u8; MAX_PLAYERS],
+}
+
+impl Setup {
+    /// Single Player: one player on side A, facing the AI.
+    pub fn single() -> Setup {
+        Setup {
+            players: 1,
+            waves: true,
+            friendly_fire: false,
+            teams: [TEAM_A; MAX_PLAYERS],
+        }
+    }
+}
+
 impl World {
+    /// A Single Player run: one player, facing the AI.
     pub fn new(seed: u32) -> World {
+        World::with_setup(seed, Setup::single())
+    }
+
+    pub fn with_setup(seed: u32, setup: Setup) -> World {
+        let player_count = (setup.players.max(1) as usize).min(MAX_PLAYERS);
         let mut world = World {
             tick: 0,
             state: State::Playing,
             stage: 1,
-            score: 0,
-            lives: START_LIVES,
             base_alive: true,
             map: Map::empty(),
-            player: Tank::default(),
-            player_spawn: (0, 0),
-            respawn_timer: 0,
+            players: [Tank::default(); MAX_PLAYERS],
+            player_count,
+            player_lives: [START_LIVES; MAX_PLAYERS],
+            player_scores: [0; MAX_PLAYERS],
+            player_respawn: [0; MAX_PLAYERS],
+            player_spawns: [(0, 0); MAX_PLAYERS],
+            waves: setup.waves,
+            friendly_fire: setup.friendly_fire,
             enemies: [Tank::default(); MAX_ENEMIES],
             enemy_count: 0,
             bullets: [Bullet::default(); MAX_BULLETS],
@@ -158,14 +209,24 @@ impl World {
             drop: None,
             steel_timer: 0,
             rng: Rng::new(seed),
-            next_id: 1,
-            next_extra_life: EXTRA_LIFE_EVERY,
+            next_id: FIRST_ENEMY_ID,
+            next_extra_life: [EXTRA_LIFE_EVERY; MAX_PLAYERS],
             steel_tiles: [(0, 0); MAX_STEEL_TILES],
             steel_count: 0,
             base_center: (0, 0),
         };
+        // The side has to be in place before the first spawn, because
+        // `spawn_player` carries forward the team it finds on the slot.
+        for i in 0..player_count {
+            world.players[i].team = setup.teams[i];
+        }
         world.load_stage(1);
         world
+    }
+
+    /// The whole run's score, which is what the Single Player HUD shows.
+    pub fn score(&self) -> i32 {
+        self.player_scores[..self.player_count].iter().sum()
     }
 
     /// Enemies left in the stage: not yet spawned plus still alive. At most 20
@@ -174,17 +235,18 @@ impl World {
         self.to_spawn + self.enemy_count as u8
     }
 
-    /// Advance the simulation by exactly one fixed step.
-    pub fn step(&mut self, input: Input) {
+    /// Advance the simulation by exactly one fixed step. `inputs` holds one
+    /// entry per player, in slot order; a player with no entry gets no input.
+    pub fn step(&mut self, inputs: &[Input]) {
         self.tick += 1;
 
         match self.state {
             State::GameOver => return,
             State::StageClear => {
-                // The stage ends when the player says so, not on a timer: the
+                // The stage ends when a player says so, not on a timer: the
                 // stage-clear sound runs 13.7 s and a 2 s auto-advance cut it
-                // off. So the screen waits, and the player leaves when ready.
-                if input.bits & INPUT_CONFIRM != 0 {
+                // off. So the screen waits, and a player leaves when ready.
+                if inputs.iter().any(|i| i.bits & INPUT_CONFIRM != 0) {
                     let next = self.stage % stage::COUNT as u32 + 1;
                     self.load_stage(next);
                 }
@@ -195,37 +257,53 @@ impl World {
 
         self.update_timers();
         self.update_spawns();
-        if !self.player.alive && self.respawn_timer == 0 {
-            self.try_respawn();
+        for i in 0..self.player_count {
+            if !self.players[i].alive && self.player_lives[i] > 0 && self.player_respawn[i] == 0 {
+                self.try_respawn(i);
+            }
         }
 
+        let p = self.player_count;
         let n = self.enemy_count;
         let mut all = [Tank::default(); MAX_TANKS];
-        all[0] = self.player;
-        all[1..1 + n].copy_from_slice(&self.enemies[..n]);
+        all[..p].copy_from_slice(&self.players[..p]);
+        all[p..p + n].copy_from_slice(&self.enemies[..n]);
 
         // Snapshot of everyone's box. Tanks move at most half a pixel per
         // tick, far too little to tunnel through a 32 px tank, so stale boxes
         // within one tick are fine.
         let mut rects = [(0, 0, 0, 0); MAX_TANKS];
-        for (i, t) in all.iter().enumerate().take(1 + n) {
+        for (i, t) in all.iter().enumerate().take(p + n) {
             if t.alive {
                 rects[i] = t.rect();
             }
         }
 
-        // --- Player ---
-        if all[0].can_act() {
+        // --- Players: each drives and fires on its own input ---
+        for i in 0..p {
+            if !all[i].can_act() {
+                continue;
+            }
+            let input = inputs.get(i).copied().unwrap_or(Input::new(0));
             if let Some(dir) = input.dir() {
-                let speed = all[0].drive_speed();
-                all[0].drive(&self.map, &rects, 0, dir, speed);
-                rects[0] = all[0].rect();
+                let speed = all[i].drive_speed();
+                all[i].drive(&self.map, &rects, i, dir, speed);
+                rects[i] = all[i].rect();
+            }
+            // A tank with respawn invulnerability cannot fire (plan section 6).
+            if all[i].invuln == 0
+                && input.fires()
+                && all[i].cooldown == 0
+                && self.has_room_for_shot(&all[i])
+            {
+                self.add_bullet(Bullet::spawn(&all[i]));
+                all[i].cooldown = PLAYER_FIRE_COOLDOWN;
             }
         }
 
         // --- Enemies ---
         for i in 0..n {
-            let idx = 1 + i;
+            let idx = p + i;
             if !all[idx].can_act() {
                 continue;
             }
@@ -240,33 +318,28 @@ impl World {
             }
         }
 
-        // --- Firing ---
-        if all[0].can_act()
-            && all[0].invuln == 0
-            && input.fires()
-            && all[0].cooldown == 0
-            && self.has_room_for_shot(&all[0])
-        {
-            self.add_bullet(Bullet::spawn(&all[0]));
-            all[0].cooldown = PLAYER_FIRE_COOLDOWN;
-        }
-
         // --- Bullets ---
         let mut i = 0;
         while i < self.bullet_count {
             let hit = self.bullets[i].advance(&mut self.map);
             let mut dead = hit != Hit::None;
-            // Only an enemy shot brings the base down. The player spawns on the
-            // base's row, so allowing its own shot to do it ended the run in
-            // under a second from standstill. The shot still dies here, and
-            // still breaks the ring brick in front of the base.
-            if hit == Hit::Base && !self.bullets[i].is_player() {
+            // The base belongs to side A, so only a shot from another side
+            // brings it down. The player spawns on the base's row, so allowing
+            // its own shot to do it ended the run in under a second from
+            // standstill. The shot still dies here, and still breaks the ring
+            // brick in front of the base.
+            if hit == Hit::Base && self.bullets[i].team != TEAM_A {
                 self.base_alive = false;
             }
             if !dead {
                 let b = self.bullets[i];
-                for (idx, target) in all.iter_mut().enumerate().take(1 + n) {
-                    if !target.alive || b.same_side_as(target) {
+                let friendly = self.friendly_fire;
+                for (idx, target) in all.iter_mut().enumerate().take(p + n) {
+                    // Never its own tank, even with friendly fire on.
+                    if !target.alive || b.owner == target.id {
+                        continue;
+                    }
+                    if !friendly && b.same_side_as(target) {
                         continue;
                     }
                     if b.hits_rect(rects[idx]) {
@@ -274,6 +347,7 @@ impl World {
                             // Saturating: `hp` is unsigned, and a tank that is
                             // already on zero must not wrap to 255.
                             target.hp = target.hp.saturating_sub(1);
+                            target.last_hit_by = b.owner;
                         }
                         dead = true;
                         break;
@@ -291,19 +365,20 @@ impl World {
         // --- Power-up pickup: tanks drive over the drop ---
         if let Some(drop) = self.drop {
             let area = drop.rect();
-            let picker = (0..=n).find(|idx| all[*idx].alive && tank_overlaps(rects[*idx], area));
+            let picker = (0..p + n).find(|idx| all[*idx].alive && tank_overlaps(rects[*idx], area));
             if let Some(owner) = picker {
                 self.drop = None;
-                self.apply_powerup(drop.kind, &mut all, n, owner);
+                self.apply_powerup(drop.kind, &mut all, p, n, owner);
             }
         }
 
         // --- Deaths ---
         for i in 0..n {
-            let idx = 1 + i;
+            let idx = p + i;
             if all[idx].alive && all[idx].hp == 0 {
                 all[idx].alive = false;
-                self.score += all[idx].kind().score();
+                let points = all[idx].kind().score();
+                self.credit_kill(all[idx].last_hit_by, points);
                 if all[idx].carries {
                     self.drop = Some(Drop {
                         kind: PowerUp::drop_for(&mut self.rng),
@@ -313,27 +388,35 @@ impl World {
                 }
             }
         }
-        if all[0].alive && all[0].hp == 0 {
-            all[0].alive = false;
-            self.lives = self.lives.saturating_sub(1);
-            if self.lives == 0 {
-                self.state = State::GameOver;
-            } else {
-                self.respawn_timer = RESPAWN_TICKS;
+        for (i, tank) in all.iter_mut().enumerate().take(p) {
+            if tank.alive && tank.hp == 0 {
+                tank.alive = false;
+                self.player_lives[i] = self.player_lives[i].saturating_sub(1);
+                // Out of lives is out of the match: the tank stays down, and
+                // never respawns. Watching the rest is the match loop's job.
+                if self.player_lives[i] > 0 {
+                    self.player_respawn[i] = RESPAWN_TICKS;
+                }
+            }
+        }
+        // The run ends when every player is out (plan section 6, elimination).
+        if self.player_lives[..p].iter().all(|l| *l == 0) {
+            self.state = State::GameOver;
+        }
+
+        // Extra lives at fixed score thresholds, per player (plan section 6).
+        for i in 0..p {
+            while self.player_scores[i] >= self.next_extra_life[i] {
+                self.player_lives[i] += 1;
+                self.next_extra_life[i] += EXTRA_LIFE_EVERY;
             }
         }
 
-        // Extra lives at fixed score thresholds (plan section 6).
-        while self.score >= self.next_extra_life {
-            self.lives += 1;
-            self.next_extra_life += EXTRA_LIFE_EVERY;
-        }
-
-        self.player = all[0];
+        self.players[..p].copy_from_slice(&all[..p]);
         let mut kept = 0;
         for i in 0..n {
-            if all[1 + i].alive {
-                self.enemies[kept] = all[1 + i];
+            if all[p + i].alive {
+                self.enemies[kept] = all[p + i];
                 kept += 1;
             }
         }
@@ -341,15 +424,28 @@ impl World {
 
         // --- Stage and run outcomes ---
         if !self.base_alive {
-            // In Single Player, losing the base ends the run.
+            // Losing the base ends the run in Single Player and Co-op.
             self.state = State::GameOver;
-        } else if self.state == State::Playing
+        } else if self.waves
+            && self.state == State::Playing
             && self.to_spawn == 0
             && self.enemy_count == 0
             && self.spawn_flash[..self.spawn_count].iter().all(|f| *f == 0)
         {
             self.state = State::StageClear;
         }
+    }
+
+    /// Credit a kill to the player who landed the last hit. An id at or above
+    /// `player_count` is an enemy's, or a tank nobody shot; player 0 takes it,
+    /// which is the only player in Single Player.
+    fn credit_kill(&mut self, by: u8, points: i32) {
+        let slot = if (by as usize) < self.player_count {
+            by as usize
+        } else {
+            0
+        };
+        self.player_scores[slot] += points;
     }
 
     // --- stage setup ------------------------------------------------------
@@ -359,13 +455,16 @@ impl World {
         self.stage = number;
         self.map = data.map();
         self.base_center = data.base_center;
-        self.player_spawn = data.player_spawn;
         self.spawns = data.enemy_spawns;
         self.spawn_count = data.spawn_count;
+        for i in 0..MAX_PLAYERS {
+            self.player_spawns[i] = data.player_spawn(i);
+        }
 
         self.spawn_flash = [0; MAX_SPAWNS];
         self.spawn_bonus = [false; MAX_SPAWNS];
-        self.to_spawn = ENEMIES_PER_STAGE;
+        // A PvP match has no AI at all, so it never queues a wave.
+        self.to_spawn = if self.waves { ENEMIES_PER_STAGE } else { 0 };
         self.enemy_count = 0;
         self.enemies = [Tank::default(); MAX_ENEMIES];
         self.bullet_count = 0;
@@ -376,43 +475,56 @@ impl World {
         self.state = State::Playing;
 
         // A new stage resets power-ups and upgrades, but not lives or score.
-        self.spawn_player(true);
+        for i in 0..self.player_count {
+            self.spawn_player(i, true);
+        }
     }
 
-    fn spawn_player(&mut self, fresh: bool) {
-        let (tx, ty) = self.player_spawn;
-        let mut tank = Tank::spawn(Kind::Player, tx, ty, Dir::Up, self.stage, 0);
+    fn spawn_player(&mut self, i: usize, fresh: bool) {
+        let (tx, ty) = self.player_spawns[i];
+        // The side outlives the tank, so it is carried across a respawn.
+        let team = self.players[i].team;
+        let mut tank = Tank::spawn(Kind::Player, tx, ty, Dir::Up, self.stage, i as u8);
+        tank.team = team;
         if !fresh {
             tank.invuln = INVULN_TICKS;
         }
-        self.player = tank;
-        self.respawn_timer = 0;
+        self.players[i] = tank;
+        self.player_respawn[i] = 0;
     }
 
-    /// Respawn next to the base, unless an enemy is sitting on the spot.
-    fn try_respawn(&mut self) {
+    /// Respawn player `i` next to the base, unless someone is on the spot.
+    fn try_respawn(&mut self, i: usize) {
         // Tile indices in the World, world units in the maths below.
-        let (tx, ty) = self.player_spawn;
+        let (tx, ty) = self.player_spawns[i];
         let (tx, ty) = (tx as i32, ty as i32);
         let spot = (tx * TILE, ty * TILE, (tx + 2) * TILE, (ty + 2) * TILE);
-        if self.enemies[..self.enemy_count]
+        let taken = self.enemies[..self.enemy_count]
             .iter()
             .any(|e| tank_overlaps(e.rect(), spot))
-        {
-            self.respawn_timer = 1;
+            || self.players[..self.player_count]
+                .iter()
+                .enumerate()
+                .any(|(j, p)| j != i && p.alive && tank_overlaps(p.rect(), spot));
+        if taken {
+            self.player_respawn[i] = 1;
             return;
         }
-        self.spawn_player(false);
+        self.spawn_player(i, false);
     }
 
     // --- timers -----------------------------------------------------------
 
     fn update_timers(&mut self) {
-        self.player.tick_timers();
+        for i in 0..self.player_count {
+            self.players[i].tick_timers();
+        }
         for i in 0..self.enemy_count {
             self.enemies[i].tick_timers();
         }
-        self.respawn_timer = self.respawn_timer.saturating_sub(1);
+        for timer in self.player_respawn.iter_mut() {
+            *timer = timer.saturating_sub(1);
+        }
         if self.steel_timer > 0 {
             self.steel_timer -= 1;
             if self.steel_timer == 0 {
@@ -464,7 +576,10 @@ impl World {
         let (tx, ty) = self.spawns[slot];
         let (tx, ty) = (tx as i32, ty as i32);
         let area = (tx * TILE, ty * TILE, (tx + 2) * TILE, (ty + 2) * TILE);
-        if self.player.alive && tank_overlaps(self.player.rect(), area) {
+        if self.players[..self.player_count]
+            .iter()
+            .any(|p| p.alive && tank_overlaps(p.rect(), area))
+        {
             return true;
         }
         self.enemies[..self.enemy_count]
@@ -486,7 +601,12 @@ impl World {
         let (tx, ty) = self.spawns[slot];
         let kind = Kind::pick(&mut self.rng, self.stage);
         let id = self.next_id;
-        self.next_id = self.next_id % 250 + 1;
+        // Wrap above the players' own ids, so the two ranges never meet.
+        self.next_id = if self.next_id >= 250 {
+            FIRST_ENEMY_ID
+        } else {
+            self.next_id + 1
+        };
         let mut enemy = Tank::spawn(kind, tx, ty, Dir::Down, self.stage, id);
         enemy.carries = self.spawn_bonus[slot];
         enemy.turn_timer = self.rng.range(TURN_TICKS.0, TURN_TICKS.1) as u8;
@@ -509,15 +629,17 @@ impl World {
         &mut self,
         kind: PowerUp,
         all: &mut [Tank; MAX_TANKS],
+        p: usize,
         n: usize,
         owner: usize,
     ) {
-        let by_player = owner == 0;
+        let by_player = owner < p;
+        let owner_team = all[owner].team;
         match kind {
             // The player gains a life; an enemy survives one extra hit.
             PowerUp::ExtraLife => {
                 if by_player {
-                    self.lives += 1;
+                    self.player_lives[owner] += 1;
                 } else {
                     all[owner].hp += 1;
                 }
@@ -525,22 +647,17 @@ impl World {
             PowerUp::Shield => all[owner].shield = rules::SHIELD_TICKS,
             // Freezes the opposing side.
             PowerUp::Freeze => {
-                if by_player {
-                    for enemy in all[1..=n].iter_mut() {
-                        if enemy.alive {
-                            enemy.frozen = rules::FREEZE_TICKS;
-                        }
+                for tank in all[..p + n].iter_mut() {
+                    if tank.alive && tank.team != owner_team {
+                        tank.frozen = rules::FREEZE_TICKS;
                     }
-                } else {
-                    all[0].frozen = rules::FREEZE_TICKS;
                 }
             }
             // Destroys every opposing tank on the map. A deliberate big swing.
             PowerUp::DestroyAll => {
-                let targets: &mut [Tank] = if by_player { &mut all[1..=n] } else { &mut all[..1] };
-                for target in targets {
-                    if target.alive && !target.protected() {
-                        target.hp = 0;
+                for tank in all[..p + n].iter_mut() {
+                    if tank.alive && tank.team != owner_team && !tank.protected() {
+                        tank.hp = 0;
                     }
                 }
             }
@@ -618,12 +735,14 @@ fn tank_overlaps(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
 // offsets, so the renderer needs no dynamic arithmetic; the counts in the
 // header say how many records are live.
 
-pub const SNAP_HEADER: usize = 23;
+pub const SNAP_HEADER: usize = 12;
+pub const SNAP_PLAYER: usize = 13;
 pub const SNAP_ENEMY: usize = 8;
 pub const SNAP_BULLET: usize = 5;
 pub const SNAP_SPAWN: usize = 3;
-pub const SNAP_TANKS_OFFSET: usize = SNAP_HEADER;
-pub const SNAP_BULLETS_OFFSET: usize = SNAP_TANKS_OFFSET + MAX_ENEMIES * SNAP_ENEMY;
+pub const SNAP_PLAYERS_OFFSET: usize = SNAP_HEADER;
+pub const SNAP_ENEMIES_OFFSET: usize = SNAP_PLAYERS_OFFSET + MAX_PLAYERS * SNAP_PLAYER;
+pub const SNAP_BULLETS_OFFSET: usize = SNAP_ENEMIES_OFFSET + MAX_ENEMIES * SNAP_ENEMY;
 pub const SNAP_SPAWNS_OFFSET: usize = SNAP_BULLETS_OFFSET + MAX_BULLETS * SNAP_BULLET;
 pub const SNAP_LEN: usize = SNAP_SPAWNS_OFFSET + MAX_SPAWNS * SNAP_SPAWN;
 /// `drop_kind` when nothing is lying on the map.
@@ -633,29 +752,36 @@ impl World {
     pub fn write_snapshot(&self, out: &mut [i32]) {
         out[0] = self.tick as i32;
         out[1] = self.state as i32;
-        out[2] = self.score;
-        out[3] = self.lives as i32;
-        out[4] = self.stage as i32;
-        out[5] = self.enemies_left() as i32;
-        out[6] = self.player.x;
-        out[7] = self.player.y;
-        out[8] = self.player.dir as i32;
-        out[9] = self.player.alive as i32;
-        out[10] = self.player.hp as i32;
-        out[11] = self.player.upgrade as i32;
-        out[12] = self.player.shield as i32;
-        out[13] = self.player.speed_boost as i32;
-        out[14] = self.player.frozen as i32;
-        out[15] = self.player.invuln as i32;
-        out[16] = self.base_alive as i32;
-        out[17] = self.enemy_count as i32;
-        out[18] = self.bullet_count as i32;
-        out[19] = self.spawn_count as i32;
-        out[20] = self.drop.map_or(SNAP_NO_DROP, |d| d.kind as i32);
-        out[21] = self.drop.map_or(0, |d| d.x);
-        out[22] = self.drop.map_or(0, |d| d.y);
+        out[2] = self.stage as i32;
+        out[3] = self.enemies_left() as i32;
+        out[4] = self.base_alive as i32;
+        out[5] = self.player_count as i32;
+        out[6] = self.enemy_count as i32;
+        out[7] = self.bullet_count as i32;
+        out[8] = self.spawn_count as i32;
+        out[9] = self.drop.map_or(SNAP_NO_DROP, |d| d.kind as i32);
+        out[10] = self.drop.map_or(0, |d| d.x);
+        out[11] = self.drop.map_or(0, |d| d.y);
 
-        let mut o = SNAP_TANKS_OFFSET;
+        let mut o = SNAP_PLAYERS_OFFSET;
+        for (i, t) in self.players[..self.player_count].iter().enumerate() {
+            out[o] = t.x;
+            out[o + 1] = t.y;
+            out[o + 2] = t.dir as i32;
+            out[o + 3] = t.alive as i32;
+            out[o + 4] = t.hp as i32;
+            out[o + 5] = t.upgrade as i32;
+            out[o + 6] = t.shield as i32;
+            out[o + 7] = t.speed_boost as i32;
+            out[o + 8] = t.frozen as i32;
+            out[o + 9] = t.invuln as i32;
+            out[o + 10] = t.team as i32;
+            out[o + 11] = self.player_lives[i] as i32;
+            out[o + 12] = self.player_scores[i];
+            o += SNAP_PLAYER;
+        }
+
+        o = SNAP_ENEMIES_OFFSET;
         for t in self.enemies[..self.enemy_count].iter() {
             out[o] = t.x;
             out[o + 1] = t.y;
@@ -673,7 +799,7 @@ impl World {
             out[o] = b.x;
             out[o + 1] = b.y;
             out[o + 2] = b.dir as i32;
-            out[o + 3] = b.speed;
+            out[o + 3] = b.team as i32;
             out[o + 4] = b.owner as i32;
             o += SNAP_BULLET;
         }

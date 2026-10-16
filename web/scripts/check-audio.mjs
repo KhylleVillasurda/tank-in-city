@@ -75,6 +75,10 @@ const { core, consts } = await loadCore();
 const sounds = new Sounds(consts);
 sounds.start();
 
+/** Every player's score and lives added up. Single Player is one player. */
+const scoreOf = (s) => s.players.reduce((n, p) => n + p.score, 0);
+const livesOf = (s) => s.players.reduce((n, p) => n + p.lives, 0);
+
 // --- Nothing plays before the player has interacted ---
 const tick = () => readSnapshot(core, consts);
 core.tc_init(11);
@@ -140,7 +144,7 @@ core.tc_init(1);
 sounds.update(tick());
 played.length = 0;
 let kills = 0;
-const scoreAt = () => tick().score;
+const scoreAt = () => scoreOf(tick());
 let last = scoreAt();
 for (let i = 0; i < 9000 && kills === 0; i++) {
   core.tc_step(i % 160 < 40 ? consts.inputUp | consts.inputFire
@@ -168,7 +172,7 @@ assert(
 core.tc_init(3);
 sounds.update(tick());
 played.length = 0;
-let lastLives = tick().lives;
+let lastLives = livesOf(tick());
 let lastBase = tick().baseAlive;
 let lostLife = false;
 let lostBase = false;
@@ -176,9 +180,9 @@ for (let i = 0; i < 60 * 300; i++) {
   core.tc_step(0);
   const s = tick();
   sounds.update(s);
-  if (s.lives < lastLives) lostLife = true;
+  if (livesOf(s) < lastLives) lostLife = true;
   if (lastBase && !s.baseAlive) lostBase = true;
-  lastLives = s.lives;
+  lastLives = livesOf(s);
   lastBase = s.baseAlive;
 }
 assert(lostLife || lostBase, "the idle player lost a life or the base");

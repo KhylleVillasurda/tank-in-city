@@ -11,10 +11,14 @@ in plan section 3 that does not need a socket.
 messages of plan section 9, a `room_state` pushed to the room after every change,
 and a lobby screen in `web/app/lobby/`.
 
+**Slice 3, done:** the engine holds several players. Sides, per-player input,
+lives, score and spawn point, a `Setup` that describes a mode, and the snapshot
+layout that carries them. Single Player behaves exactly as it did.
+
 **Status:** code complete and verified by tests, clippy, the binary on a real
 port, and the whole lobby protocol over a real Cloudflare tunnel. **No browser
 has opened the lobby screen yet**, and **no match runs**: a room reaches
-"playing" and stops there.
+"playing" and stops there, and the engine change is only reachable from tests.
 
 ## The checklist, and where each item landed
 
@@ -34,7 +38,8 @@ Plan section 7 lists the Milestone 3 items. Slice 1 covers these:
 
 Still open, in the plan's order: the match loop, win conditions, rounds, lives
 and spectating, prediction and interpolation, session tokens and reconnect, and
-the two-browser check.
+the two-browser check. Slice 3 removed the blocker under all of them: the engine
+can now hold several players, so the match loop has something to drive.
 
 ### Slice 2: the socket
 
@@ -170,16 +175,132 @@ Plan section 3 gives the modes. This is the same table in `Mode`:
   and draws whatever `room_state` it was last given. The sides, the start rules
   and the host are all the server's.
 
+### Slice 3: the engine holds several players
+
+The engine had one player tank and one spawn point, both hard-wired. Everything
+else in the plan's section 6 is written in the plural — 2v2, Co-op, "all of a
+team's players are out of lives" — so this slice is the one that makes the
+simulation able to represent those, and nothing more. No match loop, no rounds,
+no timers.
+
+**What changed in `game-core`:**
+
+- **Sides exist.** `Tank` gained `team` (`TEAM_A`, `TEAM_B`), and `Bullet`
+  gained the firing tank's `team`. `Bullet::same_side_as` is now a plain
+  comparison, and `Bullet::is_player` is gone — an id is no longer a side. The
+  base belongs to side A, so the rule "only a shot from the other side brings the
+  base down" became `team != TEAM_A`, which is the same behaviour in Single
+  Player and the right rule in a match.
+- **`World` holds `MAX_PLAYERS = 6` player tanks.** Each slot carries its own
+  run state in parallel arrays: `player_lives`, `player_scores`, `player_respawn`
+  and `player_spawns`. `MAX_TANKS` is now `MAX_PLAYERS + MAX_ENEMIES` = 10, so
+  the `all` and `rects` machinery is untouched apart from the offsets.
+- **`step` takes `&[Input]`, one per player**, in slot order. A player with no
+  entry gets no input. Only the stage-clear confirm is read from all of them:
+  either player can leave a cleared stage.
+- **`Setup` says what the engine needs to know about a mode**: how many players,
+  whether the AI wave system runs, whether friendly fire is on, and which side
+  each player is on. `World::new(seed)` is `Setup::single()`, so every existing
+  caller is unchanged. Everything else in section 6 — rounds, best-of-3, the time
+  limit, sudden death, spectating, scoring — is the match loop's, not the
+  simulation's.
+- **A kill is credited to the player who landed the last hit.** `Tank` gained
+  `last_hit_by`, set where a bullet damages a tank. A tank nobody shot (a
+  `DestroyAll`, or a test setting `hp` to 0) falls back to player 0, which is the
+  only player in Single Player. The run ends when *every* player is out of lives.
+- **A stage declares one `P` per player**, up to `MAX_PLAYERS`, in player order.
+  All three stage files gained a second `P` to the right of the base, so Co-op
+  has somewhere to put its second tank. A stage that declares fewer than the match
+  has players puts the extras on the last declared spawn.
+- **Enemy ids start at `MAX_PLAYERS`** and wrap back there, so an enemy id can
+  never collide with a player's. A player's id is its slot.
+- **`MAX_BULLETS` stays 12**: six fully-upgraded players, two each.
+
+**The snapshot, and why it moved once.** The player's fields used to sit inline in
+the header. They had to move into a record array to hold more than one player, so
+the whole ABI moved in one commit rather than twice. The header is now 12 ints
+(no `score`, no `lives`, plus `playerCount`), followed by a `SNAP_PLAYER` record
+per player, then enemies, bullets and spawn points:
+
+```
+header   tick state stage enemiesLeft baseAlive playerCount enemyCount
+         bulletCount spawnCount dropKind dropX dropY
+player   x y dir alive hp upgrade shield speed frozen invuln team lives score
+enemy    x y dir alive hp id kind carries
+bullet   x y dir team owner
+spawn    x y flash
+```
+
+`SNAP_TANKS_OFFSET` is renamed `SNAP_ENEMIES_OFFSET`, because the tanks are now
+two sections and the old name would mislead. Three constants are **appended** to
+`CONSTANTS` (`snapPlayer`, `snapPlayersOffset`, `maxPlayers`), keeping the
+positional contract with `CONSTANTS_FIELDS` in `web/game/wasm.ts` and `FIELDS` in
+`web/scripts/check-wasm.mjs`. The bullet record's `speed` — which nothing in the
+client ever read — was replaced by `team`, so `SNAP_BULLET` stayed at 5.
+
+**What the client does with it:** `readSnapshot` builds a `players` array, the
+renderer draws all of them, and the HUD and the audio triggers read player 0. The
+browser still runs exactly one player, because a match runs on the server; the
+wasm `tc_step` still takes one input and passes it as a one-element slice.
+
+### Slice 3 decisions
+
+- **`team` went in now, even though no mode uses a second player side yet.** It
+  is used immediately (the enemies are side B, and the base rule is written in
+  terms of sides), and adding it later would have meant a second snapshot change.
+  It costs 4 bytes of padding per tank.
+- **`friendly_fire` and `waves` went in now** for the same reason: they are the
+  two mode facts a match needs from the engine, and both are one byte. Free For
+  All's "friendly fire always on" needs no flag at all — giving every player a
+  side of their own makes `same_side_as` false by construction, which is the
+  honest way to say it.
+- **The `Tank` size budget went 28 → 32.** The side byte and the last-hit-by byte
+  overflowed the 28-byte layout, so the struct picked up 4 bytes of padding. Ten
+  tanks on a map is 40 bytes; packing flags into a bitfield to save it would cost
+  far more in readability than it saves in a 1392-byte struct.
+- **`World` went 1144 → 1392 bytes.** That is six player tanks and six sets of
+  run state. One room owns one `World`.
+- **The extra-life threshold is per player.** In Co-op each player earns their
+  own extra lives off their own score, as the two-player arcade original does. A
+  shared threshold would have fired once per 5000 points *total*, which is wrong.
+- **Positions stay `i32`.** Only the new per-player counters are narrow. The
+  movement and collision loop is the hot path and wasm has no 16-bit registers.
+- **The stage-clear condition now also requires `waves`.** Without it a PvP world
+  — no AI, so zero enemies from the first tick — would have cleared its stage
+  instantly. This was caught by the new `a_match_without_the_ai_never_spawns_a_wave_or_clears_a_stage` test.
+- **PvP still cannot be played.** It needs two bases per side and maps to put them
+  on; the stage format has one `#`. That, and the match loop, is the next slice.
+
 ## Verification performed
 
 ```sh
+cd game-core && cargo test     # 31 engine, 5 stage, 1 size test
+cd game-core && cargo clippy --all-targets
 cd server && cargo test        # 25 room tests, 5 unit tests, 7 socket tests
 cd server && cargo clippy --all-targets
 cd server && cargo run         # serves /ws and /health on 127.0.0.1:8080
 cd web && npm run check-lobby  # drives the protocol against a running server
+cd web && npm run check        # the wasm ABI, headless
+cd web && npm run check-audio  # the sound triggers, headless
 cd web && npx tsc --noEmit
 cd web && npm run build
 ```
+
+**Slice 3's engine tests** (8 new, in `game-core/tests/engine.rs`): a Co-op pair
+starting on two spawns and each driving on its own input, players being solid to
+each other, a player out of lives staying down while the other plays on and the
+run ending only when both are out, a kill being credited to the player who landed
+the last hit, friendly fire on and off deciding whether a shot hurts its own
+side, Free For All giving every player a side of its own, a match without the AI
+never spawning a wave or clearing a stage, and player and enemy ids never
+colliding over a 6000-tick run. Plus one new stage test: every stage can seat a
+Co-op pair, on two different spawns.
+
+**The strongest evidence that Single Player is untouched** is that
+`npm run check` prints the same line it did before the change —
+`score=2700 lives=1 stage=1 enemiesLeft=4 idleGameOver=30s statesSeen=0,2` — and
+`npm run check-audio` prints the same line it did before. The scripted run scores
+the same 2700 points over the same 6000 ticks, from the same seed.
 
 - The 25 room tests are one per rule in plan section 3: code shape and
   uniqueness, a seeded registry replaying its codes, the host being a player in
@@ -216,7 +337,14 @@ cd web && npm run build
   messages it sends are the ones `check-lobby` sends, but no button has been
   clicked and no roster has been seen on screen. That needs the user.
 - **No match.** A room reaches `Playing` and stops there; no `World` is created
-  and no ticks run.
+  and no ticks run. The engine can hold six players, but nothing asks it to.
+- **Nobody has seen two tanks on screen at once.** The renderer draws every
+  player in the snapshot and the Co-op tests prove the engine moves two, but the
+  only run the browser starts is Single Player. Two tanks side by side needs
+  either the match loop or a temporary local run, and there is no browser here.
+- **The second `P` on each stage is unchecked by eye.** The stage tests prove the
+  two spawns are on empty tiles, distinct, and reachable from each other; whether
+  the spot *looks* right next to the base is a matter for the eye.
 - **The named tunnel's `/ws` path rule is untested.** It needs a domain, and
   there is not one. A quick tunnel was used instead, which needs no path rule at
   all. See `docs/sharing.md`.

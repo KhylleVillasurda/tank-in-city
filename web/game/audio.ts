@@ -91,16 +91,17 @@ export class Sounds {
     // Someone fired. Counted per side: the bullet list is compacted, so a slot
     // number says nothing about who owns it. A shot only happens when a slot is
     // free, so the count for that side always goes up when one is fired.
-    const shots = countOwned(next.bullets, true) - countOwned(prev.bullets, true);
-    if (shots > 0) this.play("shoot");
-    if (countOwned(next.bullets, false) > countOwned(prev.bullets, false)) {
-      this.play("shoot", 0.75);
+    // Player 0 is the local one; a match on the server is not this client's.
+    const team = next.players[0]?.team ?? 0;
+    if (countSide(next.bullets, team) > countSide(prev.bullets, team)) {
+      this.play("shoot");
     }
+    if (otherSide(next) > otherSide(prev)) this.play("shoot", 0.75);
 
     // A kill is the only thing that scores. The three ways to lose a tank all
     // share the one explosion, pitched apart.
-    if (next.score > prev.score) this.play("explosion");
-    if (next.lives < prev.lives) this.play("explosion", 0.7, 0.8);
+    if (totalScore(next) > totalScore(prev)) this.play("explosion");
+    if (totalLives(next) < totalLives(prev)) this.play("explosion", 0.7, 0.8);
     if (prev.baseAlive && !next.baseAlive) this.play("explosion", 0.5);
 
     if (next.state === stateStageClear && prev.state !== stateStageClear) {
@@ -109,9 +110,10 @@ export class Sounds {
 
     // The engine follows the wheels, with a short tail so slowing for a corner
     // does not stutter. Nothing moves while paused or off-stage, so it stops.
-    const { player } = next;
-    const moved = player.x !== prev.player.x || player.y !== prev.player.y;
-    if (next.state === statePlaying && player.alive && moved) {
+    const player = next.players[0];
+    const was = prev.players[0];
+    const moved = !!player && !!was && (player.x !== was.x || player.y !== was.y);
+    if (next.state === statePlaying && player?.alive && moved) {
       this.engineTail = ENGINE_TAIL_FRAMES;
     } else if (this.engineTail > 0) this.engineTail--;
 
@@ -194,9 +196,28 @@ export class Sounds {
   }
 }
 
-/** Bullets in flight belonging to one side. Owner 0 is the player. */
-function countOwned(bullets: BulletView[], player: boolean): number {
+/** Bullets in flight belonging to one side. */
+function countSide(bullets: BulletView[], team: number): number {
   let n = 0;
-  for (const b of bullets) if ((b.owner === 0) === player) n++;
+  for (const b of bullets) if (b.team === team) n++;
+  return n;
+}
+
+/** Bullets in flight from every side but player 0's own. */
+function otherSide(s: Snapshot): number {
+  return s.bullets.length - countSide(s.bullets, s.players[0]?.team ?? 0);
+}
+
+/** Every player's score added up. Single Player has just the one. */
+function totalScore(s: Snapshot): number {
+  let n = 0;
+  for (const p of s.players) n += p.score;
+  return n;
+}
+
+/** Every player's remaining lives added up. */
+function totalLives(s: Snapshot): number {
+  let n = 0;
+  for (const p of s.players) n += p.lives;
   return n;
 }

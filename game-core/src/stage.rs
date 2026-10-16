@@ -9,9 +9,13 @@
 //! .  empty      B  brick     S  steel     W  water    T  tree
 //! #  base       P  player spawn (empty tile)        E  enemy spawn (empty tile)
 //! ```
+//!
+//! A stage declares one `P` per player it can hold, in player order, up to
+//! `MAX_PLAYERS`. The first is the Single Player spawn; Co-op uses the second.
 
 use crate::map::{Map, Tile};
 use crate::rules::{MAP_H, MAP_W};
+use crate::tank::MAX_PLAYERS;
 
 pub const MAX_SPAWNS: usize = 3;
 
@@ -19,8 +23,9 @@ pub const MAX_SPAWNS: usize = 3;
 pub struct Stage {
     pub tiles: [u8; MAP_W * MAP_H],
     /// Tile indices, not pixels: a 26x26 map needs 5 bits, so a byte each is
-    /// already generous.
-    pub player_spawn: (u8, u8),
+    /// already generous. Player order; the first is always present.
+    pub player_spawns: [(u8, u8); MAX_PLAYERS],
+    pub player_spawn_count: usize,
     pub enemy_spawns: [(u8, u8); MAX_SPAWNS],
     pub spawn_count: usize,
     /// Centre of the base in fixed-point world units, which is what bullets and
@@ -49,7 +54,8 @@ pub fn load(number: u32) -> Stage {
 
 pub fn parse(text: &str) -> Stage {
     let mut tiles = [Tile::Empty as u8; MAP_W * MAP_H];
-    let mut player_spawn = None;
+    let mut player_spawns = [(0, 0); MAX_PLAYERS];
+    let mut player_spawn_count = 0;
     let mut enemy_spawns = [(0, 0); MAX_SPAWNS];
     let mut spawn_count = 0;
 
@@ -65,7 +71,10 @@ pub fn parse(text: &str) -> Stage {
             };
             tiles[ty * MAP_W + tx] = tile as u8;
             match ch {
-                'P' => player_spawn = Some((tx as u8, ty as u8)),
+                'P' if player_spawn_count < MAX_PLAYERS => {
+                    player_spawns[player_spawn_count] = (tx as u8, ty as u8);
+                    player_spawn_count += 1;
+                }
                 'E' if spawn_count < MAX_SPAWNS => {
                     enemy_spawns[spawn_count] = (tx as u8, ty as u8);
                     spawn_count += 1;
@@ -75,10 +84,18 @@ pub fn parse(text: &str) -> Stage {
         }
     }
 
+    // A stage with no `P` at all still has to run: the first slot falls back,
+    // and the count stays at 1 so `player_spawn` always has an answer.
+    if player_spawn_count == 0 {
+        player_spawns[0] = FALLBACK_PLAYER_SPAWN;
+        player_spawn_count = 1;
+    }
+
     let spawn_count = spawn_count.max(1);
     Stage {
         tiles,
-        player_spawn: player_spawn.unwrap_or(FALLBACK_PLAYER_SPAWN),
+        player_spawns,
+        player_spawn_count,
         enemy_spawns,
         spawn_count,
         base_center: base_center(&tiles),
@@ -116,5 +133,12 @@ fn base_center(tiles: &[u8; MAP_W * MAP_H]) -> (i32, i32) {
 impl Stage {
     pub fn map(&self) -> Map {
         Map { tiles: self.tiles }
+    }
+
+    /// Where player `i` starts. A stage that declares fewer `P`s than the match
+    /// has players puts the extras on the last declared spawn.
+    pub fn player_spawn(&self, i: usize) -> (u8, u8) {
+        let last = self.player_spawn_count.saturating_sub(1);
+        self.player_spawns[i.min(last)]
     }
 }

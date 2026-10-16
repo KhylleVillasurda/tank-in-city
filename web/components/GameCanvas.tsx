@@ -65,7 +65,7 @@ export default function GameCanvas() {
     <div className="flex flex-col items-center gap-4 p-6">
       <div className="flex w-full max-w-[832px] justify-between text-sm">
         <span>
-          Score <b className="text-emerald-400">{snapshot?.score ?? 0}</b>
+          Score <b className="text-emerald-400">{snapshot?.players[0]?.score ?? 0}</b>
         </span>
         <span>
           Stage <b className="text-emerald-400">{snapshot?.stage ?? 1}</b>
@@ -74,7 +74,7 @@ export default function GameCanvas() {
           Enemies <b className="text-emerald-400">{snapshot?.enemiesLeft ?? 0}</b>
         </span>
         <span>
-          Lives <b className="text-emerald-400">{snapshot?.lives ?? 0}</b>
+          Lives <b className="text-emerald-400">{snapshot?.players[0]?.lives ?? 0}</b>
         </span>
       </div>
 
@@ -96,7 +96,7 @@ export default function GameCanvas() {
               <div className="space-y-2">
                 <p className="font-pixel text-[24px]">Game over</p>
                 <p className="text-zinc-300">
-                  {snapshot.score} points, reached stage {snapshot.stage}
+                  {snapshot.players[0]?.score ?? 0} points, reached stage {snapshot.stage}
                 </p>
                 <p className="text-zinc-500">Press R to run again</p>
                 <p className="text-xs text-zinc-600">

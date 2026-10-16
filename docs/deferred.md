@@ -64,8 +64,20 @@ three fifths of the list are done by reuse rather than by new files.
   does arithmetic on in the hottest loop in the engine, and wasm has no 16-bit
   registers. Worth revisiting only if the per-room memory in Milestone 3 turns out
   to actually bite — measure the room count first.
-- **A `Mode` enum.** One mode exists, so the enum would be a variant with no
-  second case. The seam is `World::new` plus `rules.rs`. Milestone 3.
+- **Two bases, and maps to put them on.** `Setup` can put players on two sides
+  and the base rule already reads sides, but a stage has one `#` and one base is
+  side A's. Team PvP needs a base per side, a stage format that can declare two,
+  and at least five maps (plan section 6). FFA needs no base at all, which
+  already works: a map with no `#` has nothing to lose.
+- **Match scoring.** The engine credits an enemy kill to the player who landed
+  the last hit and nothing else. Plan section 6 also wants 500 for a PvP kill,
+  1000 for destroying a base, and **-250 for a team kill, with the victim
+  counting a death and the team kill not counting as a kill**. None of that is
+  implemented; a player death currently scores nobody. The match loop needs
+  per-player kill and death counts, which means the engine has to report them.
+- **Spectating.** Plan section 6: an eliminated player watches the rest,
+  switching between remaining players' views. Today an out-of-lives player's tank
+  simply stays down and the run continues without them. The match loop owns this.
 - **An input-replay harness.** The engine is deterministic from `(seed, inputs)`
   and `?seed=` already replays a run, so a recorded input log could replay a run
   *with* your driving, which is what a bug report actually needs. Nobody has
@@ -76,13 +88,17 @@ three fifths of the list are done by reuse rather than by new files.
 
 ## Server
 
-Milestone 3 slices 1 and 2 (the lobby, and the socket under it) are in. These are
-what they left out on purpose.
+Milestone 3 slices 1, 2 and 3 (the lobby, the socket under it, and the engine
+holding several players) are in. These are what they left out on purpose.
 
-- **The match loop.** A room reaches `Playing` and stops. The engine is still
-  single-player — one player tank plus AI — so a room cannot run a match until
-  `game-core` holds several players. That engine change is the next slice, and
-  the match loop follows it.
+- **The match loop.** A room reaches `Playing` and stops. `game-core` can now
+  hold six players with per-player input, lives, score and sides, but nothing
+  constructs a `World` for a room and no ticks run. The match loop is the next
+  slice: one `World` per room, a 60 Hz tick, `input` messages in and `snapshot`
+  messages out.
+- **Rounds.** Plan section 6: best-of-3, a round ends when a base falls or a side
+  is out of lives, lives and scores reset between rounds, the round count carries
+  over. None of it exists.
 - **Every message that needs a running match.** `input`, `reconnect` and
   `request_swap` are refused with an error rather than ignored. `map`,
   `snapshot`, `map_event`, `player_disconnected`, `player_reconnected`,
@@ -126,7 +142,7 @@ Scheduled in `plan.md`, listed here only so this file is the one place to look.
 
 | Skipped | Arrives in |
 |---|---|
-| Rooms, hosting, joining, the match loop, client prediction, server authority | Milestone 3 (the lobby and its socket are done; see "Server" above) |
+| Rooms, hosting, joining, the match loop, client prediction, server authority | Milestone 3 (the lobby, its socket, and several players in the engine are done; see "Server" above) |
 | Accounts, email verification, profiles, friends, chat, spectating | Milestone 4 |
 | Local and online leaderboards, persistent scores | Milestone 4 |
 | Sprites, the credits page | Milestone 5 |

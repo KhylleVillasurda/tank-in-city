@@ -30,7 +30,7 @@ const CONSTANTS_FIELDS = [
   "snapEnemy",
   "snapBullet",
   "snapSpawn",
-  "snapTanksOffset",
+  "snapEnemiesOffset",
   "snapBulletsOffset",
   "snapSpawnsOffset",
   "snapNoDrop",
@@ -63,6 +63,9 @@ const CONSTANTS_FIELDS = [
   "tileBase",
   // Appended to match the Rust array; see CONSTANTS in game-core/src/wasm.rs.
   "inputConfirm",
+  "snapPlayer",
+  "snapPlayersOffset",
+  "maxPlayers",
 ] as const;
 
 export type Constants = Record<(typeof CONSTANTS_FIELDS)[number], number>;
@@ -77,7 +80,7 @@ export type EnemyView = {
   carries: boolean;
 };
 
-export type BulletView = { x: number; y: number; dir: number; owner: number };
+export type BulletView = { x: number; y: number; dir: number; team: number; owner: number };
 export type SpawnView = { x: number; y: number; flash: number };
 
 export type PlayerView = {
@@ -91,21 +94,24 @@ export type PlayerView = {
   speed: number;
   frozen: number;
   invuln: number;
+  /** Which side this player is on. Team modes share one; FFA gives each its own. */
+  team: number;
+  lives: number;
+  score: number;
 };
 
 export type Snapshot = {
   tick: number;
   state: number;
-  score: number;
-  lives: number;
   stage: number;
   enemiesLeft: number;
-  player: PlayerView;
   baseAlive: boolean;
+  playerCount: number;
   enemyCount: number;
   bulletCount: number;
   spawnCount: number;
   drop: { kind: number; x: number; y: number } | null;
+  players: PlayerView[];
   enemies: EnemyView[];
   bullets: BulletView[];
   spawns: SpawnView[];
@@ -151,14 +157,35 @@ function views(core: Core, consts: Constants) {
 
 export function readSnapshot(core: Core, consts: Constants): Snapshot {
   const { snap } = views(core, consts);
-  const enemyCount = snap[17];
-  const bulletCount = snap[18];
-  const spawnCount = snap[19];
-  const dropKind = snap[20];
+  const playerCount = snap[5];
+  const enemyCount = snap[6];
+  const bulletCount = snap[7];
+  const spawnCount = snap[8];
+  const dropKind = snap[9];
+
+  const players: PlayerView[] = [];
+  for (let i = 0; i < playerCount; i++) {
+    const o = consts.snapPlayersOffset + i * consts.snapPlayer;
+    players.push({
+      x: snap[o],
+      y: snap[o + 1],
+      dir: snap[o + 2],
+      alive: snap[o + 3] === 1,
+      hp: snap[o + 4],
+      upgrade: snap[o + 5],
+      shield: snap[o + 6],
+      speed: snap[o + 7],
+      frozen: snap[o + 8],
+      invuln: snap[o + 9],
+      team: snap[o + 10],
+      lives: snap[o + 11],
+      score: snap[o + 12],
+    });
+  }
 
   const enemies: EnemyView[] = [];
   for (let i = 0; i < enemyCount; i++) {
-    const o = consts.snapTanksOffset + i * consts.snapEnemy;
+    const o = consts.snapEnemiesOffset + i * consts.snapEnemy;
     enemies.push({
       x: snap[o],
       y: snap[o + 1],
@@ -173,7 +200,13 @@ export function readSnapshot(core: Core, consts: Constants): Snapshot {
   const bullets: BulletView[] = [];
   for (let i = 0; i < bulletCount; i++) {
     const o = consts.snapBulletsOffset + i * consts.snapBullet;
-    bullets.push({ x: snap[o], y: snap[o + 1], dir: snap[o + 2], owner: snap[o + 4] });
+    bullets.push({
+      x: snap[o],
+      y: snap[o + 1],
+      dir: snap[o + 2],
+      team: snap[o + 3],
+      owner: snap[o + 4],
+    });
   }
 
   const spawns: SpawnView[] = [];
@@ -185,27 +218,15 @@ export function readSnapshot(core: Core, consts: Constants): Snapshot {
   return {
     tick: snap[0],
     state: snap[1],
-    score: snap[2],
-    lives: snap[3],
-    stage: snap[4],
-    enemiesLeft: snap[5],
-    player: {
-      x: snap[6],
-      y: snap[7],
-      dir: snap[8],
-      alive: snap[9] === 1,
-      hp: snap[10],
-      upgrade: snap[11],
-      shield: snap[12],
-      speed: snap[13],
-      frozen: snap[14],
-      invuln: snap[15],
-    },
-    baseAlive: snap[16] === 1,
+    stage: snap[2],
+    enemiesLeft: snap[3],
+    baseAlive: snap[4] === 1,
+    playerCount,
     enemyCount,
     bulletCount,
     spawnCount,
-    drop: dropKind === consts.snapNoDrop ? null : { kind: dropKind, x: snap[21], y: snap[22] },
+    drop: dropKind === consts.snapNoDrop ? null : { kind: dropKind, x: snap[10], y: snap[11] },
+    players,
     enemies,
     bullets,
     spawns,

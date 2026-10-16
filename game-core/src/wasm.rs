@@ -9,11 +9,12 @@ use crate::bullet::MAX_BULLETS;
 use crate::map::{Tile, SUBPIXELS, TANK_SIZE, TILE, WORLD_H, WORLD_W};
 use crate::powerups::PowerUp;
 use crate::stage::MAX_SPAWNS;
-use crate::tank::{Kind, MAX_ENEMIES};
+use crate::tank::{Kind, MAX_ENEMIES, MAX_PLAYERS};
 use crate::{
     Input, State, World, INPUT_CONFIRM, INPUT_DOWN, INPUT_FIRE, INPUT_LEFT, INPUT_RIGHT, INPUT_UP,
-    MAP_H, MAP_W, SNAP_BULLETS_OFFSET, SNAP_BULLET, SNAP_ENEMY, SNAP_HEADER, SNAP_LEN,
-    SNAP_NO_DROP, SNAP_SPAWNS_OFFSET, SNAP_SPAWN, SNAP_TANKS_OFFSET, TICK_HZ,
+    MAP_H, MAP_W, SNAP_BULLETS_OFFSET, SNAP_BULLET, SNAP_ENEMIES_OFFSET, SNAP_ENEMY, SNAP_HEADER,
+    SNAP_LEN, SNAP_NO_DROP, SNAP_PLAYERS_OFFSET, SNAP_PLAYER, SNAP_SPAWNS_OFFSET, SNAP_SPAWN,
+    TICK_HZ,
 };
 
 static mut WORLD: Option<World> = None;
@@ -21,7 +22,7 @@ static mut SNAPSHOT: [i32; SNAP_LEN] = [0; SNAP_LEN];
 
 /// Everything the renderer needs, so no number is duplicated in JavaScript.
 /// See `CONSTANTS_FIELDS` in web/game/wasm.ts for the same order in TS.
-static CONSTANTS: [i32; 45] = [
+static CONSTANTS: [i32; 48] = [
     TILE,
     TANK_SIZE,
     WORLD_W,
@@ -35,7 +36,7 @@ static CONSTANTS: [i32; 45] = [
     SNAP_ENEMY as i32,
     SNAP_BULLET as i32,
     SNAP_SPAWN as i32,
-    SNAP_TANKS_OFFSET as i32,
+    SNAP_ENEMIES_OFFSET as i32,
     SNAP_BULLETS_OFFSET as i32,
     SNAP_SPAWNS_OFFSET as i32,
     SNAP_NO_DROP,
@@ -69,6 +70,9 @@ static CONSTANTS: [i32; 45] = [
     // Appended, not inserted: the JavaScript side reads this array by position
     // through a parallel name list, so new values go on the end.
     INPUT_CONFIRM as i32,
+    SNAP_PLAYER as i32,
+    SNAP_PLAYERS_OFFSET as i32,
+    MAX_PLAYERS as i32,
 ];
 
 fn world() -> &'static mut World {
@@ -88,10 +92,12 @@ pub extern "C" fn tc_init(seed: u32) {
     render_snapshot();
 }
 
-/// Advance exactly one 60 Hz simulation step.
+/// Advance exactly one 60 Hz simulation step, with player 0's input. The
+/// browser only ever runs Single Player; a match runs on the server, which
+/// calls `World::step` with one input per player.
 #[no_mangle]
 pub extern "C" fn tc_step(input: u32) {
-    world().step(Input::new(input));
+    world().step(&[Input::new(input)]);
     render_snapshot();
 }
 

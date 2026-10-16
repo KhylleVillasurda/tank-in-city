@@ -21,6 +21,6 @@ S...........BB...........S
 S.BB........BB........BB.S
 S.BB...WWWWBBBB.......BB.S
 S..........BBBB..........S
-S.....P....B##B..........S
+S.....P....B##B....P.....S
 S..........B##B..........S
 SSSSSSSSSSSSSSSSSSSSSSSSSS
